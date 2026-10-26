@@ -8,11 +8,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -197,7 +197,17 @@ private fun ProvidersContent(
         )
     }
     Scaffold(
-        topBar = { AnTopBar(title = stringResource(R.string.providers_title), onBack = onBack) },
+        topBar = {
+            AnTopBar(
+                title = stringResource(R.string.providers_title),
+                onBack = onBack,
+                actions = {
+                    IconButton(onClick = { showCreateDialog = true }) {
+                        Icon(Icons.Default.Add, contentDescription = stringResource(R.string.provider_custom_add))
+                    }
+                },
+            )
+        },
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
         when {
@@ -218,7 +228,6 @@ private fun ProvidersContent(
                     onConfigClick = onConfigClick,
                     onToggle = { provider, enabled -> viewModel.toggle(provider, enabled) },
                     modifier = Modifier.fillMaxSize().padding(padding),
-                    onCreateClick = { showCreateDialog = true },
                 )
         }
     }
@@ -232,7 +241,6 @@ private fun ProvidersBody(
     onProviderClick: (id: String, name: String) -> Unit,
     onConfigClick: (id: String, name: String?) -> Unit,
     onToggle: (AiProvider, Boolean) -> Unit,
-    onCreateClick: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val spacing = MaterialTheme.spacing
@@ -245,10 +253,6 @@ private fun ProvidersBody(
         }
     }
     Column(modifier = modifier) {
-        Button(
-            onClick = onCreateClick,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = spacing.l, vertical = spacing.s),
-        ) { Text(stringResource(R.string.provider_custom_add)) }
         SearchField(
             query = query,
             onQueryChange = { query = it },

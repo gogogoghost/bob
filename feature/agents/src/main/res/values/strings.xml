@@ -36,13 +36,10 @@
     <string name="agents_delete_message">This cannot be undone.</string>
     <string name="agents_delete_confirm">Delete</string>
     <string name="agents_edit_section_identity">Identity</string>
-    <string name="agents_edit_avatar_label">Avatar</string>
-    <string name="agents_edit_avatar_hint">Emoji or image URL</string>
     <string name="agents_edit_description_label">Description</string>
     <string name="agents_edit_section_model">Model</string>
     <string name="agents_edit_section_prompt">System prompt</string>
     <string name="agents_edit_section_web_search">Web search</string>
-    <string name="agents_web_search_follow_global">Follow global setting</string>
     <string name="agents_web_search_disable">Disable for this agent</string>
     <string name="agents_web_search_native">Native model search</string>
     <string name="agents_web_search_native_unavailable">Select a supported OpenAI model.</string>
@@ -55,8 +52,6 @@
     <string name="agents_edit_add_question">Add question</string>
 
     <string name="agents_avatar_pick_title">Choose avatar</string>
-    <string name="agents_avatar_custom_url">Use image URL instead</string>
-    <string name="agents_avatar_use_url">Use this URL</string>
 
     <string name="agents_avatar_upload">Choose image</string>
     <string name="agents_avatar_uploading">Saving locally…</string>

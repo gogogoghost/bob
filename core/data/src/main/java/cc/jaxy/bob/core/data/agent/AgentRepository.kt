@@ -21,12 +21,12 @@ data class Agent(val id: String = "", val title: String? = null, val name: Strin
     val displayName: String get() = name?.takeIf(String::isNotBlank) ?: title?.takeIf(String::isNotBlank) ?: id
 }
 @Serializable
-data class AgentConfig(val title: String? = null, val description: String? = null, val systemRole: String? = null, val model: String? = null, val provider: String? = null, val temperature: Double? = null, val avatar: String? = null, val backgroundColor: String? = null, val openingMessage: String? = null, val openingQuestions: List<String> = emptyList(), val webSearch: WebSearchPolicy? = null, val purePrompt: Boolean = false)
+data class AgentConfig(val title: String? = null, val description: String? = null, val systemRole: String? = null, val model: String? = null, val provider: String? = null, val temperature: Double? = null, val avatar: String? = null, val backgroundColor: String? = null, val openingMessage: String? = null, val openingQuestions: List<String> = emptyList(), val webSearch: WebSearchPolicy = WebSearchPolicy(), val purePrompt: Boolean = false)
 
 interface AgentRepository {
     suspend fun listAgents(keyword: String? = null): AnResult<List<Agent>>
     suspend fun getConfig(agentId: String): AnResult<AgentConfig>
-    suspend fun create(title: String, systemRole: String? = null, model: String? = null, provider: String? = null, description: String? = null, avatar: String? = null, openingMessage: String? = null, openingQuestions: List<String> = emptyList(), webSearch: WebSearchPolicy? = null, purePrompt: Boolean = false): AnResult<String>
+    suspend fun create(title: String, systemRole: String? = null, model: String? = null, provider: String? = null, description: String? = null, avatar: String? = null, openingMessage: String? = null, openingQuestions: List<String> = emptyList(), webSearch: WebSearchPolicy = WebSearchPolicy(), purePrompt: Boolean = false): AnResult<String>
     suspend fun updateConfig(agentId: String, fields: Map<String, JsonElement?>): AnResult<Unit>
     suspend fun remove(agentId: String): AnResult<Unit>
     suspend fun duplicate(agentId: String): AnResult<String>
@@ -41,7 +41,10 @@ class AgentRepositoryImpl @Inject constructor(private val dao: LocalDao, private
     private suspend fun read(row: AgentRow): JsonObject {
         val root = json.parseToJsonElement(row.payload).jsonObject
         val config = root.getValue("config").jsonObject
-        if ("webSearchEnabled" !in config && "webSearch" in config) return root
+        // The new-typed webSearch is non-null. Explicit null (written by the old
+        // follow-global model) still needs migration to OFF; only a present,
+        // non-null policy skips migration.
+        if ("webSearchEnabled" !in config && config["webSearch"] !is JsonNull && "webSearch" in config) return root
         val legacy = config["webSearchEnabled"]
         val enabled = when (legacy) {
             null, JsonNull -> null
@@ -51,15 +54,16 @@ class AgentRepositoryImpl @Inject constructor(private val dao: LocalDao, private
             }
             else -> error("webSearchEnabled must be a boolean or null")
         }
-        val policy = if ("webSearch" in config) config.getValue("webSearch") else {
+        // No global default anymore: explicit null / absent both mean OFF.
+        val stored = if ("webSearch" in config) config.getValue("webSearch") else JsonNull
+        val policy = if (stored != JsonNull) stored else {
             val choice = when (enabled) {
-                null -> null
-                false -> WebSearchPolicy()
                 true -> if (searchProviders.providers.first().any { it.id == "searxng" && it.endpoint.isNotBlank() }) {
                     WebSearchPolicy(WebSearchMode.PROVIDER, "searxng")
                 } else WebSearchPolicy(WebSearchMode.NATIVE)
+                else -> WebSearchPolicy()
             }
-            choice?.let { json.encodeToJsonElement(it) } ?: JsonNull
+            json.encodeToJsonElement(choice)
         }
         val migrated = JsonObject(config - "webSearchEnabled" + ("webSearch" to policy))
         val next = JsonObject(root + ("config" to migrated))
@@ -77,7 +81,7 @@ class AgentRepositoryImpl @Inject constructor(private val dao: LocalDao, private
     override suspend fun getConfig(agentId: String): AnResult<AgentConfig> = runCatching {
         json.decodeFromJsonElement<StoredAgent>(read(dao.agent(agentId) ?: error("Agent not found"))).config
     }.toResult()
-    override suspend fun create(title: String, systemRole: String?, model: String?, provider: String?, description: String?, avatar: String?, openingMessage: String?, openingQuestions: List<String>, webSearch: WebSearchPolicy?, purePrompt: Boolean): AnResult<String> {
+    override suspend fun create(title: String, systemRole: String?, model: String?, provider: String?, description: String?, avatar: String?, openingMessage: String?, openingQuestions: List<String>, webSearch: WebSearchPolicy, purePrompt: Boolean): AnResult<String> {
         if (title.isBlank()) return AnResult.Err(AnError("INVALID_INPUT", "title is required"))
         val id = UUID.randomUUID().toString()
         val config = AgentConfig(title, description, systemRole, model, provider, avatar = avatar, openingMessage = openingMessage, openingQuestions = openingQuestions.filter(String::isNotBlank), webSearch = webSearch, purePrompt = purePrompt)

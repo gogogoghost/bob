@@ -126,7 +126,7 @@ fun AgentEditScreen(
                 onBack = onBack,
                 actions = {
                     if (agentId != null) {
-                        IconButton(onClick = { viewModel.duplicate { } }) {
+                        IconButton(onClick = { viewModel.duplicate { onMutated(); onBack() } }) {
                             Icon(
                                 imageVector = Icons.Filled.FileCopy,
                                 contentDescription = stringResource(R.string.agents_duplicate),
@@ -170,6 +170,7 @@ fun AgentEditScreen(
             else -> AgentEditBody(
                 state = uiState,
                 onAvatarChange = viewModel::onAvatarChange,
+                onAvatarSave = viewModel::saveAvatar,
                 onTitleChange = viewModel::onTitleChange,
                 onDescriptionChange = viewModel::onDescriptionChange,
                 onSystemRoleChange = viewModel::onSystemRoleChange,
@@ -234,11 +235,12 @@ fun AgentEditScreen(
 private fun AgentEditBody(
     state: AgentEditViewModel.UiState,
     onAvatarChange: (String) -> Unit,
+    onAvatarSave: (String) -> Unit,
     onTitleChange: (String) -> Unit,
     onDescriptionChange: (String) -> Unit,
     onSystemRoleChange: (String) -> Unit,
     onOpeningMessageChange: (String) -> Unit,
-    onWebSearchChange: (WebSearchPolicy?) -> Unit,
+    onWebSearchChange: (WebSearchPolicy) -> Unit,
     onPurePromptChange: (Boolean) -> Unit,
     onOpenWebSearchSettings: () -> Unit,
     onQuestionChange: (Int, String) -> Unit,
@@ -295,10 +297,9 @@ private fun AgentEditBody(
         }
         if (showAvatarPicker) {
             AvatarPickerSheet(
-                current = state.avatar,
                 uploading = state.uploading,
                 onPick = {
-                    onAvatarChange(it)
+                    onAvatarSave(it)
                     showAvatarPicker = false
                 },
                 onUploadClick = { imagePicker.launch("image/*") },
@@ -436,23 +437,22 @@ private fun AgentEditBody(
 @Composable
 private fun AgentWebSearchSelector(
     state: AgentEditViewModel.UiState,
-    onChange: (WebSearchPolicy?) -> Unit,
+    onChange: (WebSearchPolicy) -> Unit,
     onManage: () -> Unit,
 ) {
     var open by remember { mutableStateOf(false) }
     val nativeSupported = supportsWebSearch(state.provider, state.model)
-    val selected = state.searchProviders.find { it.id == state.webSearch?.providerId }
-    val unavailable = state.webSearch?.mode == WebSearchMode.PROVIDER && selected?.enabled != true
-    val label = when (state.webSearch?.mode) {
-        null -> stringResource(R.string.agents_web_search_follow_global)
+    val selected = state.searchProviders.find { it.id == state.webSearch.providerId }
+    val unavailable = state.webSearch.mode == WebSearchMode.PROVIDER && selected?.enabled != true
+    val label = when (state.webSearch.mode) {
         WebSearchMode.OFF -> stringResource(R.string.agents_web_search_disable)
         WebSearchMode.NATIVE -> stringResource(R.string.agents_web_search_native)
-        WebSearchMode.PROVIDER -> selected?.name ?: state.webSearch?.providerId.orEmpty()
+        WebSearchMode.PROVIDER -> selected?.name ?: state.webSearch.providerId.orEmpty()
     }
     val warning = when {
         state.providersError -> stringResource(R.string.agents_web_search_load_error)
         unavailable -> stringResource(R.string.agents_web_search_unavailable)
-        state.webSearch?.mode == WebSearchMode.NATIVE && !nativeSupported -> stringResource(R.string.agents_web_search_native_unavailable)
+        state.webSearch.mode == WebSearchMode.NATIVE && !nativeSupported -> stringResource(R.string.agents_web_search_native_unavailable)
         else -> null
     }
     Surface(
@@ -480,19 +480,18 @@ private fun AgentWebSearchSelector(
             text = {
                 Column(Modifier.verticalScroll(rememberScrollState()).selectableGroup()) {
                     val options = listOf(
-                        null to stringResource(R.string.agents_web_search_follow_global),
                         WebSearchPolicy() to stringResource(R.string.agents_web_search_disable),
                         WebSearchPolicy(WebSearchMode.NATIVE) to stringResource(R.string.agents_web_search_native),
                     ) + state.searchProviders.filter { it.enabled }.map {
                         WebSearchPolicy(WebSearchMode.PROVIDER, it.id) to it.name
                     } + if (unavailable) listOf(state.webSearch to label) else emptyList()
                     options.forEach { (policy, title) ->
-                        val optionProvider = state.searchProviders.firstOrNull { it.id == policy?.providerId }
-                            ?: state.webSearch?.takeIf { it.mode == WebSearchMode.PROVIDER && it.providerId == policy?.providerId }
+                        val optionProvider = state.searchProviders.firstOrNull { it.id == policy.providerId }
+                            ?: state.webSearch.takeIf { it.mode == WebSearchMode.PROVIDER && it.providerId == policy.providerId }
                                 ?.let { cc.jaxy.bob.core.data.search.WebSearchProvider(it.providerId!!, title, cc.jaxy.bob.core.data.search.WebSearchProtocol.SEARXNG, "", enabled = false) }
                         val enabled = when {
-                            policy?.mode == WebSearchMode.NATIVE -> nativeSupported
-                            policy?.mode == WebSearchMode.PROVIDER -> state.searchProviders.any { it.id == policy.providerId && it.enabled }
+                            policy.mode == WebSearchMode.NATIVE -> nativeSupported
+                            policy.mode == WebSearchMode.PROVIDER -> state.searchProviders.any { it.id == policy.providerId && it.enabled }
                             else -> true
                         }
                         ListItem(
@@ -500,11 +499,11 @@ private fun AgentWebSearchSelector(
                                 containerColor = androidx.compose.ui.graphics.Color.Transparent),
                             headlineContent = { Text(title) },
                             supportingContent = if (!enabled) ({ Text(stringResource(
-                                if (policy?.mode == WebSearchMode.NATIVE) R.string.agents_web_search_native_unavailable
+                                if (policy.mode == WebSearchMode.NATIVE) R.string.agents_web_search_native_unavailable
                                 else R.string.agents_web_search_unavailable,
                             )) }) else null,
                             leadingContent = {
-                                if (policy?.mode == WebSearchMode.PROVIDER) {
+                                if (policy.mode == WebSearchMode.PROVIDER) {
                                     SearchProviderIcon(providerId = optionProvider?.id, name = title, builtin = (optionProvider?.builtin == true), size = 32.dp)
                                 } else {
                                     RadioButton(selected = state.webSearch == policy, onClick = null, enabled = enabled)

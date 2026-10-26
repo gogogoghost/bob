@@ -54,6 +54,7 @@ fun AnTextField(
     keyboardActions: KeyboardActions = KeyboardActions.Default,
     readOnly: Boolean = false,
     enabled: Boolean = true,
+    shape: androidx.compose.ui.graphics.Shape = RectangleShape,
 ) {
     TextField(
         value = value,
@@ -73,7 +74,7 @@ fun AnTextField(
         minLines = minLines,
         readOnly = readOnly,
         enabled = enabled,
-        shape = RectangleShape,
+        shape = shape,
         colors = TextFieldDefaults.colors(
             focusedContainerColor = MaterialTheme.inputRowContainer,
             unfocusedContainerColor = MaterialTheme.inputRowContainer,

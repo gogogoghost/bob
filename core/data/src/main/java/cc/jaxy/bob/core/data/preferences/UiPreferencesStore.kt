@@ -27,20 +27,14 @@ import kotlinx.serialization.json.Json
 
 internal val Context.uiPrefsDataStore by preferencesDataStore(name = "ui_prefs")
 
-data class WebSearchSettings(val policy: WebSearchPolicy = WebSearchPolicy())
-
-interface WebSearchPreferences {
-    val webSearchSettings: Flow<WebSearchSettings>
-    suspend fun setWebSearchPolicy(policy: WebSearchPolicy)
-}
-
 /**
- * Persists appearance and opt-in chat search preferences. Search is disabled by default.
+ * Persists appearance preferences. Search configuration lives per-agent;
+ * the legacy global default key is only read during one-time migration.
  */
 @Singleton
 class UiPreferencesStore internal constructor(
     private val store: DataStore<Preferences>,
-) : WebSearchPreferences {
+) {
     @Inject constructor(@ApplicationContext context: Context) : this(context.uiPrefsDataStore)
 
     private val languageKey = stringPreferencesKey("app_language")
@@ -73,16 +67,6 @@ class UiPreferencesStore internal constructor(
 
     val dynamicColor: Flow<Boolean> =
         store.data.map { it[dynamicColorKey] ?: false }
-
-    override val webSearchSettings: Flow<WebSearchSettings> =
-        store.data.onStart { WebSearchPreferenceStorage.migrate(store) }.map {
-            WebSearchSettings(WebSearchPreferenceStorage.readPolicy(it))
-        }.distinctUntilChanged()
-
-    override suspend fun setWebSearchPolicy(policy: WebSearchPolicy) {
-        WebSearchPreferenceStorage.migrate(store)
-        store.edit { it[WebSearchPreferenceStorage.policyKey] = WebSearchPreferenceStorage.json.encodeToString(policy) }
-    }
 
     suspend fun setLanguage(language: AppLanguage) {
         store.edit {

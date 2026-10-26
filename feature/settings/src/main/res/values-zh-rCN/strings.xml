@@ -3,13 +3,10 @@
     <string name="section_appearance">外观</string>
     <string name="section_web_search">联网搜索</string>
     <string name="web_search_entry_description">选择默认方式并管理搜索服务</string>
-    <string name="web_search_default_title">默认搜索方式</string>
-    <string name="web_search_default_scope">用于聊天及跟随默认设置的助手。启用服务不会自动选中该服务。</string>
     <string name="web_search_off">关闭</string>
     <string name="web_search_native">模型原生搜索</string>
     <string name="web_search_native_help">原生搜索需要受支持的 OpenAI 模型。外部搜索仅使用选定的服务，不会转用原生搜索。</string>
     <string name="web_search_missing_provider">服务不可用</string>
-    <string name="web_search_selected_unavailable">选定的服务已被删除或停用。请选择其他默认方式或启用该服务；不会自动切换到其他搜索方式。</string>
     <string name="web_search_builtin_title">搜索服务</string>
     <string name="web_search_custom_title">自定义服务</string>
     <string name="web_search_add_provider">添加搜索服务</string>
@@ -208,4 +205,5 @@
     <string name="web_search_reset_endpoint">恢复官方地址</string>
     <string name="web_search_saved_key">已保存密钥（留空表示保留）</string>
     <string name="providers_enabled_format">已启用 %1$s · 请求不出本机</string>
+    <string name="web_search_enabled_format">已启用 %1$s 个</string>
 </resources>

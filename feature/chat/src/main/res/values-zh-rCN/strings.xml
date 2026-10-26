@@ -48,8 +48,6 @@
     <string name="chat_web_search_route_status">搜索：%1$s · %2$s</string>
     <string name="chat_web_search_off">关闭</string>
     <string name="chat_web_search_native">模型内置</string>
-    <string name="chat_web_search_source_global">全局默认</string>
-    <string name="chat_web_search_source_agent">Agent 单独设置</string>
     <string name="chat_web_search_searching">正在联网搜索…</string>
     <string name="chat_web_search_reading">正在阅读网页来源…</string>
     <string name="chat_web_search_completed">联网搜索已完成</string>
@@ -64,4 +62,7 @@
     <string name="chat_search_summary_count">已用%1$s搜索 · %2$d 条来源</string>
     <string name="chat_search_summary_done">已用%1$s搜索</string>
     <string name="chat_search_sources_count">找到 %1$d 条来源</string>
+    <string name="chat_search_pick_title">联网搜索</string>
+    <string name="chat_search_manage">管理服务</string>
+    <string name="chat_close">关闭</string>
 </resources>

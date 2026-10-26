@@ -35,13 +35,10 @@
     <string name="agents_delete_message">删除后无法恢复。</string>
     <string name="agents_delete_confirm">删除</string>
     <string name="agents_edit_section_identity">基本信息</string>
-    <string name="agents_edit_avatar_label">头像</string>
-    <string name="agents_edit_avatar_hint">Emoji 或图片链接</string>
     <string name="agents_edit_description_label">描述</string>
     <string name="agents_edit_section_model">模型</string>
     <string name="agents_edit_section_prompt">系统提示词</string>
     <string name="agents_edit_section_web_search">联网搜索</string>
-    <string name="agents_web_search_follow_global">跟随全局设置</string>
     <string name="agents_web_search_disable">为此智能体禁用</string>
     <string name="agents_web_search_native">模型原生搜索</string>
     <string name="agents_web_search_native_unavailable">请选择支持内置搜索的 OpenAI 模型。</string>
@@ -54,8 +51,6 @@
     <string name="agents_edit_add_question">添加问题</string>
 
     <string name="agents_avatar_pick_title">选择头像</string>
-    <string name="agents_avatar_custom_url">使用图片链接</string>
-    <string name="agents_avatar_use_url">使用该链接</string>
 
     <string name="agents_avatar_upload">选择图片</string>
     <string name="agents_avatar_uploading">正在保存到本地…</string>

@@ -252,6 +252,7 @@ fun BobNavHost() {
                         TopicHistoryRoute(agentId = agentId, activeTopicId = activeTopicId),
                     )
                 },
+                onOpenWebSearchSettings = { navController.navigate(WebSearchSettingsRoute) },
                 onBack = { navController.popBackStack() },
             )
         }

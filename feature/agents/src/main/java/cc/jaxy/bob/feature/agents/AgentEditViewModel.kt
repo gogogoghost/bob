@@ -49,7 +49,7 @@ class AgentEditViewModel @Inject constructor(
         val systemRole: String = "",
         val openingMessage: String = "",
         val openingQuestions: List<String> = emptyList(),
-        val webSearch: WebSearchPolicy? = null,
+        val webSearch: WebSearchPolicy = WebSearchPolicy(),
         val purePrompt: Boolean = false,
         val searchProviders: List<WebSearchProvider> = emptyList(),
         val providersError: Boolean = false,
@@ -139,7 +139,7 @@ class AgentEditViewModel @Inject constructor(
     fun onDescriptionChange(v: String) = edit { copy(description = v, saved = false) }
     fun onSystemRoleChange(v: String) = edit { copy(systemRole = v, saved = false) }
     fun onOpeningMessageChange(v: String) = edit { copy(openingMessage = v, saved = false) }
-    fun onWebSearchChange(v: WebSearchPolicy?) {
+    fun onWebSearchChange(v: WebSearchPolicy) {
         if (_uiState.value.loading || _uiState.value.saving) return
         edit { copy(webSearch = v, saved = false) }
     }
@@ -191,6 +191,24 @@ class AgentEditViewModel @Inject constructor(
 
     private inline fun edit(block: UiState.() -> UiState) {
         _uiState.value = _uiState.value.block()
+    }
+
+    /**
+     * Avatar is picked from a sheet outside the Save flow: persist it
+     * immediately so leaving the page keeps the new avatar. The saved flag
+     * reuses the existing snackbar + list-refresh chain.
+     */
+    fun saveAvatar(avatar: String) {
+        edit { copy(avatar = avatar, saved = false) }
+        val id = _uiState.value.agentId ?: return
+        if (_uiState.value.loading || _uiState.value.saving) return
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(saving = true, error = null, saved = false)
+            when (val result = agentRepository.updateConfig(id, mapOf("avatar" to JsonPrimitive(avatar.trim())))) {
+                is AnResult.Ok -> _uiState.value = _uiState.value.copy(saving = false, saved = true)
+                is AnResult.Err -> _uiState.value = _uiState.value.copy(saving = false, error = result.error.toUiText())
+            }
+        }
     }
 
     fun save() {

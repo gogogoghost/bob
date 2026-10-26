@@ -4,13 +4,10 @@
     <string name="section_appearance">Appearance</string>
     <string name="section_web_search">Web search</string>
     <string name="web_search_entry_description">Choose the default and manage search services</string>
-    <string name="web_search_default_title">Default search</string>
-    <string name="web_search_default_scope">Used by chats and Agents that inherit the default. Enabling a service does not select it.</string>
     <string name="web_search_off">Off</string>
     <string name="web_search_native">Model native search</string>
     <string name="web_search_native_help">Native search requires a supported OpenAI model. External search uses the selected service, never native search.</string>
     <string name="web_search_missing_provider">Unavailable service</string>
-    <string name="web_search_selected_unavailable">The selected service is missing or disabled. Choose another default or enable it; no fallback will be used.</string>
     <string name="web_search_builtin_title">Search services</string>
     <string name="web_search_custom_title">Custom services</string>
     <string name="web_search_add_provider">Add search service</string>
@@ -210,4 +207,5 @@
     <string name="web_search_reset_endpoint">Reset to official endpoint</string>
     <string name="web_search_saved_key">Key saved (leave blank to keep)</string>
     <string name="providers_enabled_format">%1$s enabled · requests stay on this device</string>
+    <string name="web_search_enabled_format">%1$s enabled</string>
 </resources>

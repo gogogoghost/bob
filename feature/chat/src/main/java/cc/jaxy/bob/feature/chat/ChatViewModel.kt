@@ -21,8 +21,6 @@ import cc.jaxy.bob.core.data.chat.TopicRepository
 import cc.jaxy.bob.core.data.chat.WebCitation
 import cc.jaxy.bob.core.data.chat.WebSearchActivity
 import cc.jaxy.bob.core.data.chat.supportsWebSearch
-import cc.jaxy.bob.core.data.preferences.WebSearchPreferences
-import cc.jaxy.bob.core.data.preferences.WebSearchSettings
 import cc.jaxy.bob.core.data.search.WebSearchMode
 import cc.jaxy.bob.core.data.search.WebSearchPolicy
 import cc.jaxy.bob.core.data.search.WebSearchProvider
@@ -45,6 +43,8 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.catch
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonPrimitive
 
 @HiltViewModel
 class ChatViewModel @Inject constructor(
@@ -55,7 +55,6 @@ class ChatViewModel @Inject constructor(
     private val agentRepository: AgentRepository,
     private val fileRepository: FileRepository,
     private val completionRepository: ChatCompletionRepository,
-    private val searchPreferences: WebSearchPreferences,
     private val searchProviders: WebSearchProviderRepository,
 ) : ViewModel() {
     val agentId: String = savedStateHandle.get<String>("agentId") ?: ""
@@ -89,7 +88,9 @@ class ChatViewModel @Inject constructor(
         val webSearchLoading: Boolean = true,
         val webSearchReady: Boolean = false,
         val webSearchPolicy: WebSearchPolicy = WebSearchPolicy(),
-        val webSearchOverride: WebSearchPolicy? = null,
+        val webSearchOverride: WebSearchPolicy = WebSearchPolicy(),
+        val searchProviders: List<WebSearchProvider> = emptyList(),
+        val searchProvidersError: Boolean = false,
         val purePrompt: Boolean = false,
         val webSearchProviderName: String? = null,
         val streamingSearchActivity: WebSearchActivity? = null,
@@ -104,35 +105,14 @@ class ChatViewModel @Inject constructor(
     private var streamJob: Job? = null
     private var activeResponse: ChatResponseBuffer? = null
     private var generation = 0L
-    private var globalSearchSettings: WebSearchSettings? = null
-    private var globalSearchLoading = true
     private var agentSearchLoaded = false
     private var agentSearchLoading = true
-    private var searchPreferencesJob: Job? = null
     private var searchProvidersJob: Job? = null
     private var availableSearchProviders: List<WebSearchProvider>? = null
     private var searchProvidersLoading = true
 
     init { load() }
 
-    private fun observeSearchPreferences() {
-        if (searchPreferencesJob?.isActive == true) return
-        globalSearchLoading = true
-        publishSearchPolicy()
-        searchPreferencesJob = viewModelScope.launch {
-            searchPreferences.webSearchSettings.catch { error ->
-                if (error is CancellationException) throw error
-                globalSearchSettings = null
-                globalSearchLoading = false
-                publishSearchPolicy()
-                _uiState.value = _uiState.value.copy(error = UiText.Res(R.string.chat_web_search_preferences_error))
-            }.collect { settings ->
-                globalSearchSettings = settings
-                globalSearchLoading = false
-                publishSearchPolicy()
-            }
-        }
-    }
     private fun observeSearchProviders() {
         if (searchProvidersJob?.isActive == true) return
         searchProvidersLoading = true
@@ -142,6 +122,7 @@ class ChatViewModel @Inject constructor(
                 if (error is CancellationException) throw error
                 availableSearchProviders = null
                 searchProvidersLoading = false
+                _uiState.value = _uiState.value.copy(searchProvidersError = true)
                 publishSearchPolicy()
                 if (_uiState.value.webSearchPolicy.mode == WebSearchMode.PROVIDER) {
                     _uiState.value = _uiState.value.copy(error = UiText.Res(R.string.chat_web_search_preferences_error))
@@ -149,6 +130,7 @@ class ChatViewModel @Inject constructor(
             }.collect { providers ->
                 availableSearchProviders = providers
                 searchProvidersLoading = false
+                _uiState.value = _uiState.value.copy(searchProviders = providers, searchProvidersError = false)
                 publishSearchPolicy()
             }
         }
@@ -157,13 +139,12 @@ class ChatViewModel @Inject constructor(
 
     private fun publishSearchPolicy() {
         val state = _uiState.value
-        val settings = globalSearchSettings
-        // Pure prompt: the agent opted out of every app-added prompt. Search
-        // namespaces collapse to OFF (silently, not as an error).
-        val policy = if (purePrompt) WebSearchPolicy() else state.webSearchOverride ?: settings?.policy ?: WebSearchPolicy()
+        // No global default: the agent owns its search policy outright.
+        // Pure prompt collapses any policy to OFF (silently, not as an error).
+        val policy = if (purePrompt) WebSearchPolicy() else state.webSearchOverride
         val external = policy.mode == WebSearchMode.PROVIDER
         val selected = availableSearchProviders?.firstOrNull { it.id == policy.providerId }
-        val ready = settings != null && agentSearchLoaded && (!external || availableSearchProviders != null)
+        val ready = agentSearchLoaded && (!external || availableSearchProviders != null)
         _uiState.value = state.copy(
             webSearchPolicy = policy,
             webSearchAvailable = ready && when (policy.mode) {
@@ -172,13 +153,12 @@ class ChatViewModel @Inject constructor(
                 WebSearchMode.PROVIDER -> selected?.enabled == true && selected.endpoint.isNotBlank()
             },
             webSearchReady = ready,
-            webSearchLoading = globalSearchLoading || agentSearchLoading || (external && searchProvidersLoading),
+            webSearchLoading = agentSearchLoading || (external && searchProvidersLoading),
             webSearchProviderName = selected?.name ?: policy.providerId,
         )
     }
 
     fun load() {
-        observeSearchPreferences()
         observeSearchProviders()
         agentSearchLoaded = effectiveAgentId() == null
         agentSearchLoading = !agentSearchLoaded
@@ -219,7 +199,7 @@ class ChatViewModel @Inject constructor(
                 ?: chatModels.firstOrNull()
             _uiState.value = _uiState.value.copy(topics = topics, activeTopicId = topicId, models = models,
                 activeModel = model, modelsLoading = false, agentAvatar = config?.avatar?.takeIf(String::isNotBlank),
-                webSearchOverride = config?.webSearch,
+                webSearchOverride = config?.webSearch ?: WebSearchPolicy(),
                 purePrompt = config?.purePrompt == true,
                 openingMessage = config?.openingMessage?.takeIf(String::isNotBlank),
                 openingQuestions = config?.openingQuestions.orEmpty().filter(String::isNotBlank))
@@ -252,6 +232,30 @@ class ChatViewModel @Inject constructor(
     fun selectModel(model: AIModel) {
         _uiState.value = _uiState.value.copy(activeModel = model)
         publishSearchPolicy()
+        val id = effectiveAgentId() ?: return
+        if (model.id.isBlank() || model.providerId.isNullOrBlank()) return
+        viewModelScope.launch {
+            when (agentRepository.updateConfig(id, mapOf(
+                "model" to JsonPrimitive(model.id),
+                "provider" to JsonPrimitive(model.providerId!!),
+            ))) {
+                is AnResult.Ok -> Unit
+                is AnResult.Err -> Unit
+            }
+        }
+    }
+
+    /** Chat-side search switch: applies immediately and persists to the agent. */
+    fun selectSearchPolicy(policy: WebSearchPolicy) {
+        val id = effectiveAgentId()
+        _uiState.value = _uiState.value.copy(webSearchOverride = policy)
+        publishSearchPolicy()
+        if (id == null) return
+        viewModelScope.launch {
+            agentRepository.updateConfig(id, mapOf(
+                "webSearch" to Json.encodeToJsonElement(WebSearchPolicy.serializer(), policy),
+            ))
+        }
     }
 
 

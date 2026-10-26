@@ -36,7 +36,7 @@ class AgentEditViewModelTest {
     @Test
     fun `creating agents saves chosen search policy and other editor fields`() = runTest {
         Dispatchers.setMain(StandardTestDispatcher(testScheduler))
-        for (choice in listOf(null, WebSearchPolicy(), WebSearchPolicy(WebSearchMode.NATIVE), WebSearchPolicy(WebSearchMode.PROVIDER, "missing"))) {
+        for (choice in listOf(WebSearchPolicy(), WebSearchPolicy(WebSearchMode.NATIVE), WebSearchPolicy(WebSearchMode.PROVIDER, "missing"))) {
             val fixture = Fixture()
             try {
                 val vm = fixture.vm
@@ -70,7 +70,7 @@ class AgentEditViewModelTest {
     }
 
     @Test
-    fun `editing and reloading retains explicit disable and reset writes null`() = runTest {
+    fun `editing and reloading retains explicit choices`() = runTest {
         Dispatchers.setMain(StandardTestDispatcher(testScheduler))
         val fixture = Fixture()
         val id = fixture.repository().create("Researcher", systemRole = "Original prompt", webSearch = WebSearchPolicy()).value()
@@ -85,18 +85,18 @@ class AgentEditViewModelTest {
             assertTrue(vm.uiState.value.saved)
             assertEquals(WebSearchPolicy(), fixture.repository().getConfig(id).value().webSearch)
 
-            vm.onWebSearchChange(null)
+            vm.onWebSearchChange(WebSearchPolicy(WebSearchMode.NATIVE))
             assertFalse(vm.uiState.value.saved)
             vm.save()
             runCurrent()
             assertTrue(vm.uiState.value.saved)
-            assertEquals(JsonNull, Json.parseToJsonElement(fixture.rows.getValue(id).payload).jsonObject.getValue("config").jsonObject["webSearch"])
-            assertNull(fixture.repository().getConfig(id).value().webSearch)
+            assertEquals(WebSearchPolicy(WebSearchMode.NATIVE), fixture.repository().getConfig(id).value().webSearch)
 
-            vm.onWebSearchChange(WebSearchPolicy(WebSearchMode.NATIVE))
+            // Unsaved draft is discarded by an explicit reload (storage wins).
+            vm.onWebSearchChange(WebSearchPolicy())
             vm.load()
             runCurrent()
-            assertNull(vm.uiState.value.webSearch)
+            assertEquals(WebSearchPolicy(WebSearchMode.NATIVE), vm.uiState.value.webSearch)
             vm.onWebSearchChange(WebSearchPolicy(WebSearchMode.NATIVE))
             vm.save()
             runCurrent()
@@ -189,7 +189,7 @@ class AgentEditViewModelTest {
             f.vm.save()
             runCurrent()
             assertTrue(f.rows.isEmpty())
-            f.rows["missing"] = AgentRow("missing", """{"agent":{"id":"missing"},"config":{"title":"Recovered","webSearch":null}}""")
+            f.rows["missing"] = AgentRow("missing", """{"agent":{"id":"missing"},"config":{"title":"Recovered","webSearch":{"mode":"off"}}}""")
             f.vm.load()
             runCurrent()
             assertFalse(f.vm.uiState.value.loadFailed)

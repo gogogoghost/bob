@@ -65,7 +65,7 @@ fun SettingsScreen(
                     SettingRow(
                         icon = Icons.Filled.TravelExplore,
                         title = stringResource(R.string.section_web_search),
-                        subtitle = searchSummary?.takeIf(String::isNotBlank)
+                        subtitle = searchSummary?.let { stringResource(R.string.web_search_enabled_format, it) }
                             ?: stringResource(R.string.web_search_entry_description),
                         onClick = onWebSearchClick,
                     )

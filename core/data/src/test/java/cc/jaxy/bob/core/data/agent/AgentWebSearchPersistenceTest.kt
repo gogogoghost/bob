@@ -12,7 +12,7 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class AgentWebSearchPersistenceTest {
-    private val choices = listOf(null, WebSearchPolicy(), WebSearchPolicy(WebSearchMode.NATIVE), WebSearchPolicy(WebSearchMode.PROVIDER, "custom-missing"))
+    private val choices = listOf(WebSearchPolicy(), WebSearchPolicy(WebSearchMode.NATIVE), WebSearchPolicy(WebSearchMode.PROVIDER, "custom-missing"))
 
     @Test fun `all policies persist and duplicate without losing configuration`() = runBlocking {
         val f = Fixture()
@@ -34,9 +34,10 @@ class AgentWebSearchPersistenceTest {
                 assertEquals("blue", c.backgroundColor)
                 assertFalse(f.config(key).containsKey("webSearchEnabled"))
             }
-            f.repository.updateConfig(duplicate, mapOf("webSearch" to JsonNull)).value()
+            // Explicit null is rejected for the non-null policy (atomic, no partial write).
+            assertTrue(f.repository.updateConfig(duplicate, mapOf("webSearch" to JsonNull)) is AnResult.Err)
             assertEquals(choice, f.repository.getConfig(id).value().webSearch)
-            assertNull(f.repository.getConfig(duplicate).value().webSearch)
+            assertEquals(choice, f.repository.getConfig(duplicate).value().webSearch)
         }
     }
 
@@ -45,8 +46,8 @@ class AgentWebSearchPersistenceTest {
             for ((legacy, expected) in listOf(
                 "false" to WebSearchPolicy(),
                 "true" to if (configured) WebSearchPolicy(WebSearchMode.PROVIDER, "searxng") else WebSearchPolicy(WebSearchMode.NATIVE),
-                "null" to null,
-                null to null,
+                "null" to WebSearchPolicy(),
+                null to WebSearchPolicy(),
             )) {
                 val f = Fixture()
                 if (configured) f.providers.providers.value = listOf(WebSearchProvider("searxng", "SearXNG", WebSearchProtocol.SEARXNG, "https://search.example", enabled = false))

@@ -3,7 +3,6 @@ package cc.jaxy.bob.core.data.search
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.emptyPreferences
-import cc.jaxy.bob.core.data.preferences.UiPreferencesStore
 import cc.jaxy.bob.core.data.provider.ProviderSecretStore
 import java.io.IOException
 import java.util.UUID
@@ -105,23 +104,20 @@ class WebSearchProviderRepositoryTest {
     }
 
     @Test
-    fun `custom providers edit and delete credentials without rewriting selected policy`() = runBlocking {
+    fun `custom providers edit and delete credentials without touching stored configuration`() = runBlocking {
         val store = SearchMemoryPreferences()
         val secrets = SearchMemorySecrets()
         val repository = WebSearchProviderRepositoryImpl(store, secrets)
-        val preferences = UiPreferencesStore(store)
         val provider = custom().copy(enabled = true)
         repository.save(provider, "custom-key")
-        val policy = WebSearchPolicy(WebSearchMode.PROVIDER, provider.id)
-        preferences.setWebSearchPolicy(policy)
         val edited = provider.copy(name = "Updated service", endpoint = "http://127.0.0.1:8080/search")
         repository.save(edited)
         assertEquals(edited, repository.providers.first().single { it.id == provider.id })
+        assertEquals("custom-key", repository.apiKey(provider.id))
         repository.delete(provider.id)
         assertFalse(repository.providers.first().any { it.id == provider.id })
         assertNull(repository.apiKey(provider.id))
         assertFalse(secrets.values.containsKey("search.${provider.id}"))
-        assertEquals(policy, preferences.webSearchSettings.first().policy)
     }
 
     @Test

@@ -26,12 +26,16 @@ class WebSearchPreferencesMigrationTest {
     private val theme = stringPreferencesKey("app_theme")
     private val dynamicColor = booleanPreferencesKey("dynamic_color")
 
+    private suspend fun migratedPolicy(store: SearchMemoryPreferences): WebSearchPolicy {
+        WebSearchPreferenceStorage.migrate(store)
+        return WebSearchPreferenceStorage.readPolicy(store.data.first())
+    }
+
     @Test
-    fun `fresh install is off with every built in provider disabled`() = runBlocking {
+    fun `fresh install has no global policy and every built in provider disabled`() = runBlocking {
         val store = SearchMemoryPreferences()
-        val preferences = UiPreferencesStore(store)
         val repository = WebSearchProviderRepositoryImpl(store, SearchMemorySecrets())
-        assertEquals(WebSearchPolicy(), preferences.webSearchSettings.first().policy)
+        assertEquals(WebSearchPolicy(), migratedPolicy(store))
         assertEquals(WebSearchCatalog.providers, repository.providers.first())
         assertTrue(repository.providers.first().all { !it.enabled })
     }
@@ -49,17 +53,19 @@ class WebSearchPreferencesMigrationTest {
                     )
                     if (enabled != null) initial[legacyEnabled] = enabled
                     val store = SearchMemoryPreferences(initial)
-                    val preferences = UiPreferencesStore(store)
                     val secrets = SearchMemorySecrets()
                     val repository = WebSearchProviderRepositoryImpl(store, secrets)
-                    if (readProvidersFirst) repository.providers.first() else preferences.webSearchSettings.first()
+                    if (readProvidersFirst) repository.providers.first()
+                    else migratedPolicy(store)
 
                     val expected = when {
                         enabled != true -> WebSearchPolicy()
                         url.isNotBlank() -> WebSearchPolicy(WebSearchMode.PROVIDER, "searxng")
                         else -> WebSearchPolicy(WebSearchMode.NATIVE)
                     }
-                    assertEquals(expected, preferences.webSearchSettings.first().policy)
+                    // The migrated global default is only visible to storage-level
+                    // readers; product code no longer consumes it.
+                    assertEquals(expected, migratedPolicy(store))
                     val providers = repository.providers.first()
                     val searxng = providers.single { it.id == "searxng" }
                     assertEquals(url.trim(), searxng.endpoint)
@@ -72,6 +78,7 @@ class WebSearchPreferencesMigrationTest {
                     assertEquals("zh-CN", saved[language])
                     assertEquals("DARK", saved[theme])
                     assertEquals(true, saved[dynamicColor])
+                    val preferences = UiPreferencesStore(store)
                     assertEquals(AppLanguage.CHINESE, preferences.language.first())
                     assertEquals(AppTheme.DARK, preferences.theme.first())
                     assertTrue(preferences.dynamicColor.first())
@@ -85,35 +92,19 @@ class WebSearchPreferencesMigrationTest {
         val store = SearchMemoryPreferences(mutablePreferencesOf(legacyEnabled to false, legacyUrl to "http://localhost:8888"))
         val repository = WebSearchProviderRepositoryImpl(store, SearchMemorySecrets())
         assertTrue(repository.providers.first().single { it.id == "searxng" }.enabled)
-        assertEquals(WebSearchPolicy(), UiPreferencesStore(store).webSearchSettings.first().policy)
+        assertEquals(WebSearchPolicy(), migratedPolicy(store))
     }
 
     @Test
-    fun `canonical policy round trips without requiring or changing chosen provider`() = runBlocking {
-        val store = SearchMemoryPreferences()
-        val preferences = UiPreferencesStore(store)
-        val repository = WebSearchProviderRepositoryImpl(store, SearchMemorySecrets())
-        for (policy in listOf(WebSearchPolicy(WebSearchMode.NATIVE), WebSearchPolicy(WebSearchMode.PROVIDER, "missing-provider"), WebSearchPolicy(WebSearchMode.PROVIDER, "tavily"), WebSearchPolicy())) {
-            preferences.setWebSearchPolicy(policy)
-            assertEquals(policy, UiPreferencesStore(store).webSearchSettings.first().policy)
-            assertTrue(repository.providers.first().all { !it.enabled })
-        }
-    }
-
-    @Test
-    fun `migration is one time and does not restore edited endpoint or policy`() = runBlocking {
+    fun `migration is one time and does not restore edited endpoint`() = runBlocking {
         val store = SearchMemoryPreferences(mutablePreferencesOf(legacyEnabled to true, legacyUrl to "https://old.example"))
-        val preferences = UiPreferencesStore(store)
-        assertEquals(WebSearchPolicy(WebSearchMode.PROVIDER, "searxng"), preferences.webSearchSettings.first().policy)
+        assertEquals(WebSearchPolicy(WebSearchMode.PROVIDER, "searxng"), migratedPolicy(store))
         val repository = WebSearchProviderRepositoryImpl(store, SearchMemorySecrets())
         val edited = repository.providers.first().single { it.id == "searxng" }.copy(endpoint = "https://new.example/base", enabled = false)
         repository.save(edited)
-        assertEquals(WebSearchPolicy(WebSearchMode.PROVIDER, "searxng"), preferences.webSearchSettings.first().policy)
-        preferences.setWebSearchPolicy(WebSearchPolicy(WebSearchMode.NATIVE))
 
         val reopened = WebSearchProviderRepositoryImpl(store, SearchMemorySecrets())
         assertEquals(edited, reopened.providers.first().single { it.id == "searxng" })
-        assertEquals(WebSearchPolicy(WebSearchMode.NATIVE), UiPreferencesStore(store).webSearchSettings.first().policy)
         assertNull(store.data.first()[legacyEnabled])
         assertNull(store.data.first()[legacyUrl])
     }
@@ -125,30 +116,26 @@ class WebSearchPreferencesMigrationTest {
             legacyUrl to "https://old.example",
             WebSearchPreferenceStorage.policyKey to "{\"mode\":\"off\"}",
         ))
-        assertEquals(WebSearchPolicy(), UiPreferencesStore(store).webSearchSettings.first().policy)
+        assertEquals(WebSearchPolicy(), migratedPolicy(store))
         assertTrue(WebSearchProviderRepositoryImpl(store, SearchMemorySecrets()).providers.first().single { it.id == "searxng" }.enabled)
     }
 
     @Test
-    fun `appearance setters retain independent canonical search configuration`() = runBlocking {
+    fun `appearance setters retain independent stored preferences`() = runBlocking {
         val store = SearchMemoryPreferences()
         val preferences = UiPreferencesStore(store)
-        val policy = WebSearchPolicy(WebSearchMode.NATIVE)
-        preferences.setWebSearchPolicy(policy)
         preferences.setLanguage(AppLanguage.CHINESE)
         preferences.setTheme(AppTheme.DARK)
         preferences.setDynamicColor(true)
         assertEquals(AppLanguage.CHINESE, preferences.language.first())
         assertEquals(AppTheme.DARK, preferences.theme.first())
         assertTrue(preferences.dynamicColor.first())
-        assertEquals(policy, preferences.webSearchSettings.first().policy)
         preferences.setLanguage(AppLanguage.SYSTEM)
         preferences.setTheme(AppTheme.SYSTEM)
         preferences.setDynamicColor(false)
         assertNull(store.data.first()[language])
         assertNull(store.data.first()[theme])
         assertFalse(preferences.dynamicColor.first())
-        assertEquals(policy, preferences.webSearchSettings.first().policy)
     }
 
     @Test
@@ -157,24 +144,23 @@ class WebSearchPreferencesMigrationTest {
         val store = SearchMemoryPreferences(initial)
         val failure = IOException("disk unavailable")
         store.failNextUpdate = failure
-        val preferences = UiPreferencesStore(store)
-        assertSame(failure, expectFailure<IOException> { preferences.webSearchSettings.first() })
+        assertSame(failure, expectFailure<IOException> { WebSearchProviderRepositoryImpl(store, SearchMemorySecrets()).providers.first() })
         assertEquals(initial.asMap(), store.data.first().asMap())
-        assertEquals(WebSearchPolicy(WebSearchMode.PROVIDER, "searxng"), preferences.webSearchSettings.first().policy)
+        assertEquals(WebSearchPolicy(WebSearchMode.PROVIDER, "searxng"), migratedPolicy(store))
         assertNull(store.data.first()[legacyUrl])
     }
 
     @Test
     fun `damaged canonical configuration is an error not a reset to defaults`() = runBlocking {
         val store = SearchMemoryPreferences()
-        val preferences = UiPreferencesStore(store)
-        preferences.webSearchSettings.first()
+        val repository = WebSearchProviderRepositoryImpl(store, SearchMemorySecrets())
+        repository.providers.first()
         store.edit { it[WebSearchPreferenceStorage.policyKey] = "not-json" }
-        expectFailure<SerializationException> { preferences.webSearchSettings.first() }
+        expectFailure<SerializationException> { migratedPolicy(store) }
         assertEquals("not-json", store.data.first()[WebSearchPreferenceStorage.policyKey])
         store.edit { it[WebSearchPreferenceStorage.providersKey] = "not-json" }
-        val repository = WebSearchProviderRepositoryImpl(store, SearchMemorySecrets())
-        expectFailure<SerializationException> { repository.providers.first() }
+        val reopened = WebSearchProviderRepositoryImpl(store, SearchMemorySecrets())
+        expectFailure<SerializationException> { reopened.providers.first() }
         assertEquals("not-json", store.data.first()[WebSearchPreferenceStorage.providersKey])
     }
 }

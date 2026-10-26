@@ -13,7 +13,6 @@ import cc.jaxy.bob.core.data.chat.TopicRepositoryImpl
 import cc.jaxy.bob.core.data.files.FileRepository
 import cc.jaxy.bob.core.data.files.FileRepositoryImpl
 import cc.jaxy.bob.core.data.preferences.UiPreferencesStore
-import cc.jaxy.bob.core.data.preferences.WebSearchPreferences
 import cc.jaxy.bob.core.data.provider.AndroidProviderSecretStore
 import cc.jaxy.bob.core.data.provider.ProviderRepository
 import cc.jaxy.bob.core.data.provider.ProviderRepositoryImpl
@@ -38,7 +37,6 @@ abstract class DataModule {
     @Binds abstract fun bindFileRepository(impl: FileRepositoryImpl): FileRepository
     @Binds abstract fun bindProviderSecretStore(impl: AndroidProviderSecretStore): ProviderSecretStore
     @Binds abstract fun bindChatCompletionRepository(impl: DirectChatCompletionRepository): ChatCompletionRepository
-    @Binds abstract fun bindWebSearchPreferences(impl: UiPreferencesStore): WebSearchPreferences
     @Binds abstract fun bindWebSearchProviderRepository(impl: WebSearchProviderRepositoryImpl): WebSearchProviderRepository
 
     companion object {

@@ -8,14 +8,11 @@ import cc.jaxy.bob.core.data.agent.AgentRepository
 import cc.jaxy.bob.core.data.agent.AgentConfig
 import cc.jaxy.bob.core.data.chat.*
 import cc.jaxy.bob.core.data.files.FileRepository
-import cc.jaxy.bob.core.data.preferences.WebSearchPreferences
-import cc.jaxy.bob.core.data.preferences.WebSearchSettings
 import cc.jaxy.bob.core.data.search.WebSearchMode
 import cc.jaxy.bob.core.data.search.WebSearchPolicy
 import cc.jaxy.bob.core.data.search.WebSearchProtocol
 import cc.jaxy.bob.core.data.search.WebSearchProvider
 import cc.jaxy.bob.core.data.search.WebSearchProviderRepository
-import java.io.IOException
 import java.lang.reflect.Proxy
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -76,7 +73,7 @@ class ChatViewModelTest {
         }
         val agents = dependency(AgentRepository::class.java) { error("Unexpected agent operation $it") }
         val files = dependency(FileRepository::class.java) { error("Unexpected file operation $it") }
-        val vm = ChatViewModel(SavedStateHandle(), messages, topics, models, agents, files, completions, TestSearchPreferences(), TestSearchProviders())
+        val vm = ChatViewModel(SavedStateHandle(), messages, topics, models, agents, files, completions, TestSearchProviders())
         val store = ViewModelStore().apply { put("chat", vm) }
         try {
             runCurrent()
@@ -123,13 +120,12 @@ class ChatViewModelTest {
     @Test
     fun `stopping before answer text preserves search activity and sources in history`() = runTest {
         Dispatchers.setMain(StandardTestDispatcher(testScheduler))
-        val preferences = TestSearchPreferences(WebSearchPolicy(WebSearchMode.PROVIDER, "searxng"))
         val source = WebCitation("https://example.com/news", "Source report")
         val activity = WebSearchActivity(WebSearchStage.READING, listOf("latest local agent"))
-        val fixture = searchFixture(preferences, flow {
+        val fixture = searchFixture(flow {
             emit(ChatStreamChunk(searchActivity = activity, citations = listOf(source)))
             awaitCancellation()
-        })
+        }, agentConfig = { AnResult.Ok(AgentConfig(webSearch = WebSearchPolicy(WebSearchMode.PROVIDER, "searxng"))) })
         try {
             runCurrent()
             assertEquals(WebSearchMode.PROVIDER, fixture.vm.uiState.value.webSearchPolicy.mode)
@@ -157,36 +153,8 @@ class ChatViewModelTest {
     }
 
     @Test
-    fun `Agent overrides stay fixed while inherited search follows global changes`() = runTest {
-        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
-        val off = WebSearchPolicy()
-        val native = WebSearchPolicy(WebSearchMode.NATIVE)
-        val external = WebSearchPolicy(WebSearchMode.PROVIDER, "searxng")
-        val preferences = TestSearchPreferences(off)
-        val fixtures = listOf(null, native, external, off).map { preference ->
-            searchFixture(preferences, flow { error("Policy changes must not start chat") },
-                agentConfig = { AnResult.Ok(AgentConfig(webSearch = preference)) })
-        }
-        try {
-            runCurrent()
-            assertEquals(listOf(off, native, external, off), fixtures.map { it.vm.uiState.value.webSearchPolicy })
-            preferences.webSearchSettings.value = WebSearchSettings(external)
-            runCurrent()
-            assertEquals(listOf(external, native, external, off), fixtures.map { it.vm.uiState.value.webSearchPolicy })
-            preferences.webSearchSettings.value = WebSearchSettings(native)
-            runCurrent()
-            assertEquals(listOf(native, native, external, off), fixtures.map { it.vm.uiState.value.webSearchPolicy })
-            assertTrue(fixtures.all { it.vm.uiState.value.webSearchReady })
-        } finally {
-            fixtures.forEach { it.store.clear() }
-            runCurrent()
-        }
-    }
-
-    @Test
     fun `pure prompt agent collapses search to off without blocking send`() = runTest {
         Dispatchers.setMain(StandardTestDispatcher(testScheduler))
-        val preferences = TestSearchPreferences(WebSearchPolicy(WebSearchMode.PROVIDER, "searxng"))
         var seenPolicy = WebSearchPolicy(WebSearchMode.PROVIDER, "searxng")
         var seenPure = false
         val chunks = flow {
@@ -223,7 +191,7 @@ class ChatViewModelTest {
         }
         val files = dependency(FileRepository::class.java) { error("Unexpected file operation $it") }
         val vm = ChatViewModel(SavedStateHandle(mapOf("agentId" to "search-agent")),
-            messages, topics, models, agents, files, completions, preferences, TestSearchProviders())
+            messages, topics, models, agents, files, completions, TestSearchProviders())
         val store = ViewModelStore().apply { put("pure", vm) }
         try {
             runCurrent()
@@ -242,11 +210,73 @@ class ChatViewModelTest {
     }
 
     @Test
+    fun `chat model and search changes persist to the agent`() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        val persisted = mutableMapOf<String, kotlinx.serialization.json.JsonElement?>()
+        val messages = object : MessageRepository {
+            override suspend fun listMessages(topicId: String?, agentId: String?) = AnResult.Ok(emptyList<ChatMessage>())
+            override suspend fun saveMessage(topicId: String, message: ChatMessage) = AnResult.Ok(Unit)
+        }
+        val topics = dependency(TopicRepository::class.java) { AnResult.Ok("topic-1") }
+        val models = dependency(ModelRepository::class.java) { _ ->
+            AnResult.Ok(listOf(AIModel(id = "local-model", providerId = "custom-local", enabled = true)))
+        }
+        val files = dependency(FileRepository::class.java) { error("Unexpected file operation $it") }
+        val completions = object : ChatCompletionRepository {
+            override fun stream(providerId: String, modelId: String, systemPrompt: String, history: List<ChatMessage>,
+                temperature: Double?, sessionId: String?, searchPolicy: WebSearchPolicy, purePrompt: Boolean): Flow<ChatStreamChunk> =
+                flow { emit(ChatStreamChunk(textDelta = "hi", completion = ChatCompletion(ChatCompletionStatus.COMPLETED))) }
+        }
+        val written = mutableListOf<Pair<String, Map<String, kotlinx.serialization.json.JsonElement?>>>()
+        val updating = java.lang.reflect.Proxy.newProxyInstance(
+            AgentRepository::class.java.classLoader, arrayOf(AgentRepository::class.java)
+        ) { _, method, args ->
+            when (method.name) {
+                "getConfig" -> AnResult.Ok(AgentConfig(
+                    webSearch = WebSearchPolicy(WebSearchMode.PROVIDER, "searxng"),
+                    model = "old-model", provider = "old-provider"))
+                "updateConfig" -> {
+                    @Suppress("UNCHECKED_CAST")
+                    val fields = args[1] as Map<String, kotlinx.serialization.json.JsonElement?>
+                    written += (args[0] as String) to fields
+                    AnResult.Ok(Unit)
+                }
+                else -> error("Unexpected agent operation ${method.name}")
+            }
+        } as AgentRepository
+        val vm = ChatViewModel(SavedStateHandle(mapOf("agentId" to "persist-agent")),
+            messages, topics, models, updating, files, completions, TestSearchProviders())
+        val store = ViewModelStore().apply { put("persist", vm) }
+        try {
+            runCurrent()
+            assertEquals(WebSearchMode.PROVIDER, vm.uiState.value.webSearchPolicy.mode)
+            vm.selectModel(AIModel(id = "new-model", providerId = "new-provider", enabled = true))
+            runCurrent()
+            assertEquals("new-model", vm.uiState.value.activeModel?.id)
+            vm.selectSearchPolicy(WebSearchPolicy())
+            runCurrent()
+            assertEquals(WebSearchMode.OFF, vm.uiState.value.webSearchPolicy.mode)
+            assertTrue(vm.uiState.value.webSearchReady)
+            assertEquals(2, written.size)
+            assertEquals("persist-agent", written[0].first)
+            assertEquals("new-model", (written[0].second["model"] as kotlinx.serialization.json.JsonPrimitive).content)
+            assertEquals("new-provider", (written[0].second["provider"] as kotlinx.serialization.json.JsonPrimitive).content)
+            assertEquals("persist-agent", written[1].first)
+            assertEquals(setOf("webSearch"), written[1].second.keys)
+            assertEquals(WebSearchPolicy(), kotlinx.serialization.json.Json.decodeFromJsonElement(
+                WebSearchPolicy.serializer(), written[1].second.getValue("webSearch")!!))
+
+        } finally {
+            store.clear()
+            runCurrent()
+        }
+    }
+
+    @Test
     fun `requested Agent search blocks sending until a search route is configured`() = runTest {
         Dispatchers.setMain(StandardTestDispatcher(testScheduler))
-        val preferences = TestSearchPreferences()
         val providers = TestSearchProviders(emptyList())
-        val fixture = searchFixture(preferences, flow {
+        val fixture = searchFixture(flow {
             emit(ChatStreamChunk(textDelta = "Sourced answer", completion = ChatCompletion(ChatCompletionStatus.COMPLETED)))
         }, agentConfig = { AnResult.Ok(AgentConfig(webSearch = WebSearchPolicy(WebSearchMode.PROVIDER, "searxng"))) },
             providers = providers)
@@ -272,7 +302,7 @@ class ChatViewModelTest {
     @Test
     fun `unsupported native mode does not use an enabled external provider`() = runTest {
         Dispatchers.setMain(StandardTestDispatcher(testScheduler))
-        val fixture = searchFixture(TestSearchPreferences(WebSearchPolicy(WebSearchMode.PROVIDER, "searxng")),
+        val fixture = searchFixture(
             flow { error("Unsupported native search must not start inference") },
             agentConfig = { AnResult.Ok(AgentConfig(webSearch = WebSearchPolicy(WebSearchMode.NATIVE))) })
         try {
@@ -296,7 +326,7 @@ class ChatViewModelTest {
         Dispatchers.setMain(StandardTestDispatcher(testScheduler))
         val selected = WebSearchPolicy(WebSearchMode.PROVIDER, "searxng")
         val providers = TestSearchProviders()
-        val fixture = searchFixture(TestSearchPreferences(), flow { error("Missing search provider must not start inference") },
+        val fixture = searchFixture(flow { error("Missing search provider must not start inference") },
             agentConfig = { AnResult.Ok(AgentConfig(webSearch = selected)) }, providers = providers)
         try {
             runCurrent()
@@ -318,9 +348,8 @@ class ChatViewModelTest {
     @Test
     fun `Agent configuration errors do not fall back to global search and explicit refresh recovers`() = runTest {
         Dispatchers.setMain(StandardTestDispatcher(testScheduler))
-        val preferences = TestSearchPreferences(WebSearchPolicy(WebSearchMode.PROVIDER, "searxng"))
         var config: AnResult<AgentConfig> = AnResult.Err(AnError("LOCAL_DATA", "Unavailable Agent configuration"))
-        val fixture = searchFixture(preferences, flow { error("Unread Agent configuration must not start chat") },
+        val fixture = searchFixture(flow { error("Unread Agent configuration must not start chat") },
             agentConfig = { config })
         try {
             runCurrent()
@@ -341,42 +370,9 @@ class ChatViewModelTest {
         }
     }
 
-    @Test
-    fun `global read errors block even an enabled Agent and manual reload can retry`() = runTest {
-        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
-        var fail = true
-        val settings = MutableStateFlow(WebSearchSettings())
-        val preferences = object : WebSearchPreferences {
-            override val webSearchSettings: Flow<WebSearchSettings> = flow {
-                if (fail) throw IOException("Storage unavailable")
-                settings.collect { emit(it) }
-            }
-            override suspend fun setWebSearchPolicy(policy: WebSearchPolicy) = error("Chat cannot write global settings")
-        }
-        val fixture = searchFixture(preferences, flow { error("Unread global settings must not start chat") },
-            agentConfig = { AnResult.Ok(AgentConfig(webSearch = WebSearchPolicy(WebSearchMode.PROVIDER, "searxng"))) })
-        try {
-            runCurrent()
-            assertFalse(fixture.vm.uiState.value.webSearchReady)
-            assertFalse(fixture.vm.uiState.value.webSearchLoading)
-            fixture.vm.send("Wait for configuration")
-            runCurrent()
-            assertFalse(fixture.vm.uiState.value.streaming)
-            assertTrue(fixture.vm.uiState.value.messages.isEmpty())
-            fail = false
-            fixture.vm.load()
-            runCurrent()
-            assertTrue(fixture.vm.uiState.value.webSearchReady)
-            assertEquals(WebSearchMode.PROVIDER, fixture.vm.uiState.value.webSearchPolicy.mode)
-        } finally {
-            fixture.store.clear()
-            runCurrent()
-        }
-    }
-
     private data class SearchFixture(val vm: ChatViewModel, val store: ViewModelStore)
 
-    private fun searchFixture(preferences: WebSearchPreferences, chunks: Flow<ChatStreamChunk>,
+    private fun searchFixture(chunks: Flow<ChatStreamChunk>,
         agentConfig: (() -> AnResult<AgentConfig>)? = null,
         providers: TestSearchProviders = TestSearchProviders()): SearchFixture {
         val persisted = mutableListOf<ChatMessage>()
@@ -409,15 +405,8 @@ class ChatViewModelTest {
         }
         val files = dependency(FileRepository::class.java) { error("Unexpected file operation $it") }
         val handle = if (agentConfig == null) SavedStateHandle() else SavedStateHandle(mapOf("agentId" to "search-agent"))
-        val vm = ChatViewModel(handle, messages, topics, models, agents, files, completions, preferences, providers)
+        val vm = ChatViewModel(handle, messages, topics, models, agents, files, completions, providers)
         return SearchFixture(vm, ViewModelStore().apply { put("search", vm) })
-    }
-
-    private class TestSearchPreferences(policy: WebSearchPolicy = WebSearchPolicy()) : WebSearchPreferences {
-        override val webSearchSettings = MutableStateFlow(WebSearchSettings(policy))
-        override suspend fun setWebSearchPolicy(policy: WebSearchPolicy) {
-            webSearchSettings.value = WebSearchSettings(policy)
-        }
     }
 
     private class TestSearchProviders(initial: List<WebSearchProvider> = listOf(testSearchProvider())) : WebSearchProviderRepository {

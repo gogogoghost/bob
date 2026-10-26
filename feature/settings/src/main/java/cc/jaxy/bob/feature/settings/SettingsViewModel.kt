@@ -10,15 +10,14 @@ import javax.inject.Inject
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.catch
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     private val uiPreferencesStore: UiPreferencesStore,
-    webSearchPreferences: cc.jaxy.bob.core.data.preferences.WebSearchPreferences,
     searchRepository: cc.jaxy.bob.core.data.search.WebSearchProviderRepository,
     providerRepository: cc.jaxy.bob.core.data.provider.ProviderRepository,
 ) : ViewModel() {
@@ -35,19 +34,9 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { uiPreferencesStore.setLanguage(language) }
     }
 
-    val searchSummary: StateFlow<String?> = kotlinx.coroutines.flow.combine(
-        webSearchPreferences.webSearchSettings,
-        searchRepository.providers,
-    ) { settings, providers ->
-        when (val policy = settings.policy) {
-            else -> when (policy.mode) {
-                cc.jaxy.bob.core.data.search.WebSearchMode.OFF -> null
-                cc.jaxy.bob.core.data.search.WebSearchMode.NATIVE -> "native"
-                cc.jaxy.bob.core.data.search.WebSearchMode.PROVIDER ->
-                    providers.firstOrNull { it.id == policy.providerId }?.name ?: policy.providerId
-            }
-        }
-    }.catch { emit(null) }
+    val searchSummary: StateFlow<String?> = searchRepository.providers
+        .map { providers -> providers.count { it.enabled }.toString() as String? }
+        .catch { emit(null) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
     val providerSummary: StateFlow<String?> = kotlinx.coroutines.flow.flow {
