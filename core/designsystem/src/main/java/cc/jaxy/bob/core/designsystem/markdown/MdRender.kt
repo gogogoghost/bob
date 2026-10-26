@@ -48,7 +48,9 @@ fun MdDocument(
     val content: @Composable () -> Unit = {
         Column(
             modifier = modifier.fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+            // Breathing room between block-level elements (paragraphs,
+            // headings, code, quotes, lists, tables).
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             blocks.forEach { MdBlockView(it) }
         }

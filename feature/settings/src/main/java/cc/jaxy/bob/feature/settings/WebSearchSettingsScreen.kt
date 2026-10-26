@@ -70,7 +70,7 @@ fun WebSearchSettingsScreen(
             contentPadding = PaddingValues(horizontal = spacing.l, vertical = spacing.s),
             verticalArrangement = Arrangement.spacedBy(spacing.s),
         ) {
-            if (state.loading || state.pending) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
+            if (state.loading) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
             if (state.loadFailed) item {
                 SearchFailure(R.string.web_search_load_failed, viewModel::load)
             }

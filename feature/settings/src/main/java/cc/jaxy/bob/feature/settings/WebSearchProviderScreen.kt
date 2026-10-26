@@ -90,7 +90,7 @@ fun WebSearchProviderScreen(providerId: String?, onBack: () -> Unit) {
             contentPadding = PaddingValues(vertical = spacing.m),
             verticalArrangement = Arrangement.spacedBy(spacing.xs),
         ) {
-            if (state.loading || state.pending) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
+            if (state.loading) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
             if (state.loadFailed) item { SearchFailure(R.string.web_search_provider_load_failed, viewModel::load) }
             if (state.missing) item { SearchErrorText(R.string.web_search_provider_not_found) }
             if (state.saveFailed) item { SearchErrorText(R.string.web_search_provider_save_failed) }
