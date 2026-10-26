@@ -121,7 +121,7 @@ internal class ProviderChatRequests(private val files: FileRepository? = null, p
             base = "https://spark-api-open.xf-yun.com$path"
         }
         val key = config["apiKey"].orEmpty()
-        val headers = mutableMapOf("User-Agent" to "LocalAgentAndroid/0.1.0", "Accept" to "text/event-stream, application/json")
+        val headers = mutableMapOf("User-Agent" to "BobAndroid/0.1.0", "Accept" to "text/event-stream, application/json")
         if (key.isNotBlank()) headers["Authorization"] = "Bearer $key"
         if (id == "opencodecodingplan") {
             headers["x-opencode-client"] = "local-agent-android"

@@ -25,10 +25,10 @@ jobs:
 
       - name: Decode keystore
         env:
-          KEYSTORE_BASE64: ${{ secrets.ANLOBEHUB_KEYSTORE_BASE64 }}
-          KEYSTORE_PASSWORD: ${{ secrets.ANLOBEHUB_KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.ANLOBEHUB_KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.ANLOBEHUB_KEY_PASSWORD }}
+          KEYSTORE_BASE64: ${{ secrets.BOB_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.BOB_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.BOB_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.BOB_KEY_PASSWORD }}
         run: |
           printf '%s' "$KEYSTORE_BASE64" | tr -d ' \n\r\t' | base64 -d > "$RUNNER_TEMP/release.keystore"
           # Fail fast (10s, not 5min). PKCS12 forces keypass == storepass, so a
@@ -37,7 +37,7 @@ jobs:
             -storepass "$KEYSTORE_PASSWORD" 2>/dev/null | grep -i "Keystore type" | awk '{print $3}')
           echo "Keystore type: $TYPE"
           if [ "$TYPE" = "PKCS12" ] && [ -n "$KEY_PASSWORD" ] && [ "$KEY_PASSWORD" != "$KEYSTORE_PASSWORD" ]; then
-            echo "::error::PKCS12 requires key password == store password; delete ANLOBEHUB_KEY_PASSWORD or make them match."
+            echo "::error::PKCS12 requires key password == store password; delete BOB_KEY_PASSWORD or make them match."
             exit 1
           fi
           if [ "$TYPE" = "JKS" ] || [ "$TYPE" = "JCEKS" ]; then
@@ -55,14 +55,14 @@ jobs:
           NAME="${GITHUB_REF_NAME#v}"
           echo "name=$NAME" >> "$GITHUB_OUTPUT"
           echo "code=${{ github.run_number }}" >> "$GITHUB_OUTPUT"
-          echo "file=anlobehub-v${NAME}.apk" >> "$GITHUB_OUTPUT"
+          echo "file=bob-v${NAME}.apk" >> "$GITHUB_OUTPUT"
 
       - name: Assemble release APK
         env:
-          ANLOBEHUB_KEYSTORE_PATH: ${{ runner.temp }}/release.keystore
-          ANLOBEHUB_KEYSTORE_PASSWORD: ${{ secrets.ANLOBEHUB_KEYSTORE_PASSWORD }}
-          ANLOBEHUB_KEY_ALIAS: ${{ secrets.ANLOBEHUB_KEY_ALIAS }}
-          ANLOBEHUB_KEY_PASSWORD: ${{ secrets.ANLOBEHUB_KEY_PASSWORD }}
+          BOB_KEYSTORE_PATH: ${{ runner.temp }}/release.keystore
+          BOB_KEYSTORE_PASSWORD: ${{ secrets.BOB_KEYSTORE_PASSWORD }}
+          BOB_KEY_ALIAS: ${{ secrets.BOB_KEY_ALIAS }}
+          BOB_KEY_PASSWORD: ${{ secrets.BOB_KEY_PASSWORD }}
         run: |
           ./gradlew :app:assembleRelease --console=plain \
             -PversionName="${{ steps.version.outputs.name }}" \

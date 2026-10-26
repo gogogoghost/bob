@@ -286,7 +286,7 @@ class ProviderOAuthRepository @Inject constructor(private val secrets: ProviderS
 
     private suspend fun request(url: String, body: RequestBody? = null, token: String? = null): HttpResult {
         val builder = Request.Builder().url(url).header("Accept", "application/json")
-            .header("User-Agent", "AnLobeHub/1.0")
+            .header("User-Agent", "Bob/1.0")
         if (body != null) builder.post(body)
         if (token != null) builder.header("Authorization", "token $token")
         return suspendCancellableCoroutine { continuation ->

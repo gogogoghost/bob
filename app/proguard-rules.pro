@@ -1,1 +1,1 @@
-# Anlobehub ProGuard rules (release shrinking)
+# Bob ProGuard rules (release shrinking)
