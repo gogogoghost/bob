@@ -25,27 +25,27 @@ jobs:
 
       - name: Decode keystore
         env:
-          KEYSTORE_BASE64: ${{ secrets.BOB_KEYSTORE_BASE64 }}
-          KEYSTORE_PASSWORD: ${{ secrets.BOB_KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.BOB_KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.BOB_KEY_PASSWORD }}
+          KEYSTORE_BASE64: ${{ secrets.ANLOBEHUB_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANLOBEHUB_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANLOBEHUB_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANLOBEHUB_KEY_PASSWORD }}
         run: |
           printf '%s' "$KEYSTORE_BASE64" | tr -d ' \n\r\t' | base64 -d > "$RUNNER_TEMP/release.keystore"
           # Fail fast (10s, not 5min). PKCS12 forces keypass == storepass, so a
           # distinct KEY_PASSWORD can only break the build -> reject it here.
           if [ ! -s "$RUNNER_TEMP/release.keystore" ]; then
-            echo "::error::Keystore is empty. Configure BOB_KEYSTORE_BASE64 (and friends) in repo Secrets."
+            echo "::error::Keystore is empty. Configure ANLOBEHUB_KEYSTORE_BASE64 (and friends) in repo Secrets."
             exit 1
           fi
           TYPE=$(keytool -list -keystore "$RUNNER_TEMP/release.keystore" \
             -storepass "$KEYSTORE_PASSWORD" 2>/dev/null | grep -i "Keystore type" | awk '{print $3}')
           echo "Keystore type: $TYPE"
           if [ -z "$TYPE" ]; then
-            echo "::error::Cannot read keystore (wrong BOB_KEYSTORE_PASSWORD or corrupt BOB_KEYSTORE_BASE64). Check repo Secrets."
+            echo "::error::Cannot read keystore (wrong ANLOBEHUB_KEYSTORE_PASSWORD or corrupt ANLOBEHUB_KEYSTORE_BASE64). Check repo Secrets."
             exit 1
           fi
           if [ "$TYPE" = "PKCS12" ] && [ -n "$KEY_PASSWORD" ] && [ "$KEY_PASSWORD" != "$KEYSTORE_PASSWORD" ]; then
-            echo "::error::PKCS12 requires key password == store password; delete BOB_KEY_PASSWORD or make them match."
+            echo "::error::PKCS12 requires key password == store password; delete ANLOBEHUB_KEY_PASSWORD or make them match."
             exit 1
           fi
           if [ "$TYPE" = "JKS" ] || [ "$TYPE" = "JCEKS" ]; then
@@ -67,10 +67,10 @@ jobs:
 
       - name: Assemble release APK
         env:
-          BOB_KEYSTORE_PATH: ${{ runner.temp }}/release.keystore
-          BOB_KEYSTORE_PASSWORD: ${{ secrets.BOB_KEYSTORE_PASSWORD }}
-          BOB_KEY_ALIAS: ${{ secrets.BOB_KEY_ALIAS }}
-          BOB_KEY_PASSWORD: ${{ secrets.BOB_KEY_PASSWORD }}
+          ANLOBEHUB_KEYSTORE_PATH: ${{ runner.temp }}/release.keystore
+          ANLOBEHUB_KEYSTORE_PASSWORD: ${{ secrets.ANLOBEHUB_KEYSTORE_PASSWORD }}
+          ANLOBEHUB_KEY_ALIAS: ${{ secrets.ANLOBEHUB_KEY_ALIAS }}
+          ANLOBEHUB_KEY_PASSWORD: ${{ secrets.ANLOBEHUB_KEY_PASSWORD }}
         run: |
           ./gradlew :app:assembleRelease --console=plain \
             -PversionName="${{ steps.version.outputs.name }}" \

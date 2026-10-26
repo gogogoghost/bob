@@ -21,17 +21,17 @@ android {
     }
 
     signingConfigs {
-        // Release key from env (CI secrets) or ~/.gradle/gradle.properties.
+        // Release key from env (CI secrets, still ANLOBEHUB_* names) or ~/.gradle/gradle.properties.
         // Absent -> unsigned release build (still assembles for verification).
         create("release") {
-            val ksPath = System.getenv("BOB_KEYSTORE_PATH")
-                ?: project.findProperty("bob.keystore.path") as String?
-            val ksPass = System.getenv("BOB_KEYSTORE_PASSWORD")
-                ?: project.findProperty("bob.keystore.password") as String?
-            val alias = System.getenv("BOB_KEY_ALIAS")
-                ?: project.findProperty("bob.key.alias") as String?
-            val keyPass = System.getenv("BOB_KEY_PASSWORD")
-                ?: project.findProperty("bob.key.password") as String?
+            val ksPath = System.getenv("ANLOBEHUB_KEYSTORE_PATH")
+                ?: project.findProperty("anlobehub.keystore.path") as String?
+            val ksPass = System.getenv("ANLOBEHUB_KEYSTORE_PASSWORD")
+                ?: project.findProperty("anlobehub.keystore.password") as String?
+            val alias = System.getenv("ANLOBEHUB_KEY_ALIAS")
+                ?: project.findProperty("anlobehub.key.alias") as String?
+            val keyPass = System.getenv("ANLOBEHUB_KEY_PASSWORD")
+                ?: project.findProperty("anlobehub.key.password") as String?
             if (!ksPath.isNullOrBlank() && !ksPass.isNullOrBlank() && !alias.isNullOrBlank()) {
                 storeFile = file(ksPath)
                 storePassword = ksPass
@@ -42,12 +42,12 @@ android {
     }
 
     // True only when signingConfigs.release got a store file (all three set).
-    val hasReleaseKeystore = !((System.getenv("BOB_KEYSTORE_PATH")
-        ?: project.findProperty("bob.keystore.path") as String?).isNullOrBlank() ||
-        (System.getenv("BOB_KEYSTORE_PASSWORD")
-        ?: project.findProperty("bob.keystore.password") as String?).isNullOrBlank() ||
-        (System.getenv("BOB_KEY_ALIAS")
-        ?: project.findProperty("bob.key.alias") as String?).isNullOrBlank())
+    val hasReleaseKeystore = !((System.getenv("ANLOBEHUB_KEYSTORE_PATH")
+        ?: project.findProperty("anlobehub.keystore.path") as String?).isNullOrBlank() ||
+        (System.getenv("ANLOBEHUB_KEYSTORE_PASSWORD")
+        ?: project.findProperty("anlobehub.keystore.password") as String?).isNullOrBlank() ||
+        (System.getenv("ANLOBEHUB_KEY_ALIAS")
+        ?: project.findProperty("anlobehub.key.alias") as String?).isNullOrBlank())
     buildTypes {
         release {
             isMinifyEnabled = true
