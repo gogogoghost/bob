@@ -33,9 +33,17 @@ jobs:
           printf '%s' "$KEYSTORE_BASE64" | tr -d ' \n\r\t' | base64 -d > "$RUNNER_TEMP/release.keystore"
           # Fail fast (10s, not 5min). PKCS12 forces keypass == storepass, so a
           # distinct KEY_PASSWORD can only break the build -> reject it here.
+          if [ ! -s "$RUNNER_TEMP/release.keystore" ]; then
+            echo "::error::Keystore is empty. Configure BOB_KEYSTORE_BASE64 (and friends) in repo Secrets."
+            exit 1
+          fi
           TYPE=$(keytool -list -keystore "$RUNNER_TEMP/release.keystore" \
             -storepass "$KEYSTORE_PASSWORD" 2>/dev/null | grep -i "Keystore type" | awk '{print $3}')
           echo "Keystore type: $TYPE"
+          if [ -z "$TYPE" ]; then
+            echo "::error::Cannot read keystore (wrong BOB_KEYSTORE_PASSWORD or corrupt BOB_KEYSTORE_BASE64). Check repo Secrets."
+            exit 1
+          fi
           if [ "$TYPE" = "PKCS12" ] && [ -n "$KEY_PASSWORD" ] && [ "$KEY_PASSWORD" != "$KEYSTORE_PASSWORD" ]; then
             echo "::error::PKCS12 requires key password == store password; delete BOB_KEY_PASSWORD or make them match."
             exit 1

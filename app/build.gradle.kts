@@ -41,6 +41,13 @@ android {
         }
     }
 
+    // True only when signingConfigs.release got a store file (all three set).
+    val hasReleaseKeystore = !((System.getenv("BOB_KEYSTORE_PATH")
+        ?: project.findProperty("bob.keystore.path") as String?).isNullOrBlank() ||
+        (System.getenv("BOB_KEYSTORE_PASSWORD")
+        ?: project.findProperty("bob.keystore.password") as String?).isNullOrBlank() ||
+        (System.getenv("BOB_KEY_ALIAS")
+        ?: project.findProperty("bob.key.alias") as String?).isNullOrBlank())
     buildTypes {
         release {
             isMinifyEnabled = true
@@ -49,9 +56,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
-            val ksPath = System.getenv("BOB_KEYSTORE_PATH")
-                ?: project.findProperty("bob.keystore.path") as String?
-            if (!ksPath.isNullOrBlank()) {
+            if (hasReleaseKeystore) {
                 signingConfig = signingConfigs.getByName("release")
             }
         }
