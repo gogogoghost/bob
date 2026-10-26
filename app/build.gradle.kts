@@ -7,11 +7,11 @@ plugins {
 }
 
 android {
-    namespace = "cc.jaxy.anlobehub.app"
+    namespace = "cc.jaxy.bob.app"
     compileSdk = 37
 
     defaultConfig {
-        applicationId = "cc.jaxy.anlobehub.app"
+        applicationId = "cc.jaxy.bob.app"
         minSdk = 26
         targetSdk = 37
         // CI overrides via -PversionCode/-PversionName from the git tag.
@@ -24,14 +24,14 @@ android {
         // Release key from env (CI secrets) or ~/.gradle/gradle.properties.
         // Absent -> unsigned release build (still assembles for verification).
         create("release") {
-            val ksPath = System.getenv("ANLOBEHUB_KEYSTORE_PATH")
-                ?: project.findProperty("anlobehub.keystore.path") as String?
-            val ksPass = System.getenv("ANLOBEHUB_KEYSTORE_PASSWORD")
-                ?: project.findProperty("anlobehub.keystore.password") as String?
-            val alias = System.getenv("ANLOBEHUB_KEY_ALIAS")
-                ?: project.findProperty("anlobehub.key.alias") as String?
-            val keyPass = System.getenv("ANLOBEHUB_KEY_PASSWORD")
-                ?: project.findProperty("anlobehub.key.password") as String?
+            val ksPath = System.getenv("BOB_KEYSTORE_PATH")
+                ?: project.findProperty("bob.keystore.path") as String?
+            val ksPass = System.getenv("BOB_KEYSTORE_PASSWORD")
+                ?: project.findProperty("bob.keystore.password") as String?
+            val alias = System.getenv("BOB_KEY_ALIAS")
+                ?: project.findProperty("bob.key.alias") as String?
+            val keyPass = System.getenv("BOB_KEY_PASSWORD")
+                ?: project.findProperty("bob.key.password") as String?
             if (!ksPath.isNullOrBlank() && !ksPass.isNullOrBlank() && !alias.isNullOrBlank()) {
                 storeFile = file(ksPath)
                 storePassword = ksPass
@@ -49,8 +49,8 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
-            val ksPath = System.getenv("ANLOBEHUB_KEYSTORE_PATH")
-                ?: project.findProperty("anlobehub.keystore.path") as String?
+            val ksPath = System.getenv("BOB_KEYSTORE_PATH")
+                ?: project.findProperty("bob.keystore.path") as String?
             if (!ksPath.isNullOrBlank()) {
                 signingConfig = signingConfigs.getByName("release")
             }

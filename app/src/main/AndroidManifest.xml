@@ -5,7 +5,7 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <application
-        android:name=".AnlobehubApp"
+        android:name=".BobApp"
         android:allowBackup="true"
         android:fullBackupContent="@xml/backup_rules"
         android:dataExtractionRules="@xml/data_extraction_rules"
@@ -13,11 +13,11 @@
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:networkSecurityConfig="@xml/network_security_config"
-        android:theme="@style/Theme.Anlobehub">
+        android:theme="@style/Theme.Bob">
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:theme="@style/Theme.Anlobehub"
+            android:theme="@style/Theme.Bob"
             android:enableOnBackInvokedCallback="true"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>

@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-    namespace = "cc.jaxy.anlobehub.core.designsystem"
+    namespace = "cc.jaxy.bob.core.designsystem"
     compileSdk = 37
 
     defaultConfig { minSdk = 26 }

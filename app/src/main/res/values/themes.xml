@@ -1,14 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- DayNight window theme: splash + window background follow system dark mode. -->
-    <style name="Theme.Anlobehub" parent="Theme.SplashScreen">
+    <style name="Theme.Bob" parent="Theme.SplashScreen">
         <item name="windowSplashScreenBackground">@color/splash_background</item>
         <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
-        <item name="postSplashScreenTheme">@style/Theme.Anlobehub.Main</item>
+        <item name="postSplashScreenTheme">@style/Theme.Bob.Main</item>
         <item name="android:windowBackground">@color/window_background</item>
     </style>
 
-    <style name="Theme.Anlobehub.Main" parent="android:Theme.Material.NoActionBar">
+    <style name="Theme.Bob.Main" parent="android:Theme.Material.NoActionBar">
         <item name="android:windowBackground">@color/window_background</item>
     </style>
 </resources>

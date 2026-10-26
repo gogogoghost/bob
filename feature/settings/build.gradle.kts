@@ -7,7 +7,7 @@ plugins {
 }
 
 android {
-    namespace = "cc.jaxy.anlobehub.feature.settings"
+    namespace = "cc.jaxy.bob.feature.settings"
     compileSdk = 37
 
     defaultConfig { minSdk = 26 }

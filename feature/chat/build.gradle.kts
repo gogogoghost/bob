@@ -7,7 +7,7 @@ plugins {
 }
 
 android {
-    namespace = "cc.jaxy.anlobehub.feature.chat"
+    namespace = "cc.jaxy.bob.feature.chat"
     compileSdk = 37
 
     defaultConfig { minSdk = 26 }
