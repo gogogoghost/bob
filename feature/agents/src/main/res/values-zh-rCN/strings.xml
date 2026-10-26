@@ -13,7 +13,7 @@
     <string name="agents_create_title">新建智能体</string>
     <string name="agents_create_title_label">名称</string>
     <string name="agents_create_title_required">请填写名称</string>
-    <string name="agents_create_system_role_label">系统角色</string>
+    <string name="agents_create_system_role_label">系统提示词</string>
     <string name="agents_create_model_label">模型</string>
     <string name="agents_create_model_auto">自动</string>
     <string name="agents_manage_title">管理智能体</string>
@@ -61,4 +61,6 @@
     <string name="agents_avatar_upload">选择图片</string>
     <string name="agents_avatar_uploading">正在保存到本地…</string>
     <string name="agents_avatar_upload_failed">无法将图片保存到本地</string>
+    <string name="agents_pure_prompt_title">纯净提示词</string>
+    <string name="agents_pure_prompt_desc">关闭应用附加的搜索指令与来源注入，只发送你的系统提示词与本轮消息。</string>
 </resources>

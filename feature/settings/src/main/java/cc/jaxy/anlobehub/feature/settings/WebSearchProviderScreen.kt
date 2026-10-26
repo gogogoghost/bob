@@ -49,6 +49,7 @@ import cc.jaxy.anlobehub.core.designsystem.component.PasswordField
 import cc.jaxy.anlobehub.core.designsystem.component.SearchProviderIcon
 import cc.jaxy.anlobehub.core.designsystem.component.SectionTitle
 import cc.jaxy.anlobehub.core.designsystem.theme.spacing
+import cc.jaxy.anlobehub.core.designsystem.theme.inputRowContainer
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -86,8 +87,8 @@ fun WebSearchProviderScreen(providerId: String?, onBack: () -> Unit) {
     }) { padding ->
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(padding),
-            contentPadding = PaddingValues(horizontal = spacing.l, vertical = spacing.m),
-            verticalArrangement = Arrangement.spacedBy(spacing.m),
+            contentPadding = PaddingValues(vertical = spacing.m),
+            verticalArrangement = Arrangement.spacedBy(spacing.xs),
         ) {
             if (state.loading || state.pending) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
             if (state.loadFailed) item { SearchFailure(R.string.web_search_provider_load_failed, viewModel::load) }
@@ -97,8 +98,7 @@ fun WebSearchProviderScreen(providerId: String?, onBack: () -> Unit) {
             if (draft != null) {
                 item {
                     Surface(
-                        shape = MaterialTheme.shapes.large,
-                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        color = MaterialTheme.inputRowContainer,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         ListItem(
@@ -120,8 +120,7 @@ fun WebSearchProviderScreen(providerId: String?, onBack: () -> Unit) {
                 item { SectionTitle(text = stringResource(R.string.section_web_search)) }
                 item {
                     Surface(
-                        shape = MaterialTheme.shapes.large,
-                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        color = MaterialTheme.inputRowContainer,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         ListItem(
@@ -204,12 +203,14 @@ fun WebSearchProviderScreen(providerId: String?, onBack: () -> Unit) {
                     }
                     item {
                         Text(stringResource(R.string.provider_cfg_aesgcm), style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = spacing.l))
                     }
                 } else {
                     item {
                         Text(stringResource(R.string.web_search_searxng_help), style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = spacing.l))
                     }
                 }
                 if (draft.docsUrl.isNotBlank()) item {
@@ -221,8 +222,7 @@ fun WebSearchProviderScreen(providerId: String?, onBack: () -> Unit) {
                 item { SectionTitle(text = stringResource(R.string.web_search_advanced)) }
                 item {
                     Surface(
-                        shape = MaterialTheme.shapes.large,
-                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        color = MaterialTheme.inputRowContainer,
                         modifier = Modifier.fillMaxWidth().clickable { advanced = !advanced },
                     ) {
                         ListItem(

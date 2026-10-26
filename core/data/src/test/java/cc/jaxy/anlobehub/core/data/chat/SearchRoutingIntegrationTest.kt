@@ -77,6 +77,24 @@ class SearchRoutingIntegrationTest {
     }
 
     @Test
+    fun `pure prompt skips external search without injection or failure`() = runBlocking {
+        RoutingServer().use { server ->
+            val chunks = server.repository().stream("openai", "gpt-4.1", "Custom instructions",
+                listOf(ChatMessage(role = "user", content = "Latest news")),
+                searchPolicy = WebSearchPolicy(WebSearchMode.PROVIDER, "tavily"), purePrompt = true).toList()
+            assertTrue(chunks.none { it.searchActivity != null || it.citations.isNotEmpty() })
+            assertEquals(ChatCompletionStatus.COMPLETED, chunks.last().completion?.status)
+            // Inference runs once; the search endpoint is never hit.
+            assertTrue(server.requests.none { it.path == "/search" })
+            val body = server.requests.single { it.path == "/v1/responses" }.body
+            assertFalse(body.containsKey("tools"))
+            assertEquals("Custom instructions", body.getValue("instructions").jsonPrimitive.content)
+            assertTrue("untrusted" !in body.toString())
+            assertTrue("Retrieved web sources" !in body.toString())
+        }
+    }
+
+    @Test
     fun `disabled or removed selected service fails visibly without native fallback or inference`() = runBlocking {
         RoutingServer().use { server ->
             for (providers in listOf(listOf(server.searchProvider.copy(enabled = false)), emptyList())) {

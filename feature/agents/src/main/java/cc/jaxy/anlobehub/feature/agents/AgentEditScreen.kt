@@ -19,19 +19,19 @@ import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FileCopy
-import androidx.compose.material.icons.filled.SmartToy
-import androidx.compose.material.icons.filled.TravelExplore
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
@@ -65,6 +65,7 @@ import cc.jaxy.anlobehub.core.designsystem.component.SectionTitle
 import cc.jaxy.anlobehub.core.designsystem.component.SkeletonList
 import cc.jaxy.anlobehub.core.designsystem.text.resolve
 import cc.jaxy.anlobehub.core.designsystem.theme.spacing
+import cc.jaxy.anlobehub.core.designsystem.theme.inputRowContainer
 import cc.jaxy.anlobehub.core.designsystem.R as DsR
 
 /**
@@ -175,6 +176,7 @@ fun AgentEditScreen(
                 onOpeningMessageChange = viewModel::onOpeningMessageChange,
                 onQuestionChange = viewModel::onQuestionChange,
                 onWebSearchChange = viewModel::onWebSearchChange,
+                onPurePromptChange = viewModel::onPurePromptChange,
                 onOpenWebSearchSettings = onOpenWebSearchSettings,
                 onAddQuestion = viewModel::addQuestion,
                 onRemoveQuestion = viewModel::removeQuestion,
@@ -237,6 +239,7 @@ private fun AgentEditBody(
     onSystemRoleChange: (String) -> Unit,
     onOpeningMessageChange: (String) -> Unit,
     onWebSearchChange: (WebSearchPolicy?) -> Unit,
+    onPurePromptChange: (Boolean) -> Unit,
     onOpenWebSearchSettings: () -> Unit,
     onQuestionChange: (Int, String) -> Unit,
     onAddQuestion: () -> Unit,
@@ -304,8 +307,8 @@ private fun AgentEditBody(
             )
         }
         Column(
-            modifier = Modifier.padding(spacing.l),
-            verticalArrangement = Arrangement.spacedBy(spacing.m),
+            modifier = Modifier.padding(vertical = spacing.s),
+            verticalArrangement = Arrangement.spacedBy(spacing.xs),
         ) {
             AnTextField(
                 value = state.title,
@@ -329,11 +332,13 @@ private fun AgentEditBody(
             )
         }
         SectionTitle(text = stringResource(R.string.agents_edit_section_model))
+        Surface(
+            color = MaterialTheme.inputRowContainer,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
         ListItem(
-            leadingContent = {
-                Icon(imageVector = Icons.Filled.SmartToy, contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant)
-            },
+            colors = androidx.compose.material3.ListItemDefaults.colors(
+                containerColor = androidx.compose.ui.graphics.Color.Transparent),
             headlineContent = { Text(stringResource(R.string.agents_create_model_label)) },
             supportingContent = {
                 Text(
@@ -359,11 +364,30 @@ private fun AgentEditBody(
             },
             modifier = Modifier.fillMaxWidth().clickable(onClick = onOpenModelPicker),
         )
+        }
         AgentWebSearchSelector(state, onWebSearchChange, onOpenWebSearchSettings)
         SectionTitle(text = stringResource(R.string.agents_edit_section_prompt))
+        Surface(
+            color = MaterialTheme.inputRowContainer,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            ListItem(
+                colors = androidx.compose.material3.ListItemDefaults.colors(
+                    containerColor = androidx.compose.ui.graphics.Color.Transparent),
+                headlineContent = { Text(stringResource(R.string.agents_pure_prompt_title)) },
+                supportingContent = { Text(stringResource(R.string.agents_pure_prompt_desc)) },
+                trailingContent = {
+                    Switch(
+                        checked = state.purePrompt,
+                        onCheckedChange = onPurePromptChange,
+                        enabled = !state.loading && !state.saving,
+                    )
+                },
+            )
+        }
         Column(
-            modifier = Modifier.padding(spacing.l),
-            verticalArrangement = Arrangement.spacedBy(spacing.m),
+            modifier = Modifier.padding(vertical = spacing.s),
+            verticalArrangement = Arrangement.spacedBy(spacing.xs),
         ) {
             AnTextField(
                 value = state.systemRole,
@@ -371,12 +395,13 @@ private fun AgentEditBody(
                 label = stringResource(R.string.agents_create_system_role_label),
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = false,
+                minLines = 6,
             )
         }
         SectionTitle(text = stringResource(R.string.agents_edit_section_opening))
         Column(
-            modifier = Modifier.padding(spacing.l),
-            verticalArrangement = Arrangement.spacedBy(spacing.m),
+            modifier = Modifier.padding(vertical = spacing.s),
+            verticalArrangement = Arrangement.spacedBy(spacing.xs),
         ) {
             AnTextField(
                 value = state.openingMessage,
@@ -401,7 +426,7 @@ private fun AgentEditBody(
                     },
                 )
             }
-            OutlinedButton(onClick = onAddQuestion) {
+            FilledTonalButton(onClick = onAddQuestion, modifier = Modifier.padding(horizontal = spacing.l)) {
                 Icon(imageVector = Icons.Filled.Add, contentDescription = null)
                 Text(stringResource(R.string.agents_edit_add_question))
             }
@@ -431,16 +456,13 @@ private fun AgentWebSearchSelector(
         state.webSearch?.mode == WebSearchMode.NATIVE && !nativeSupported -> stringResource(R.string.agents_web_search_native_unavailable)
         else -> null
     }
-    val selectedBrand = cc.jaxy.anlobehub.core.designsystem.component.searchBrand(state.webSearch?.providerId, (selected?.builtin == true))
+    Surface(
+        color = MaterialTheme.inputRowContainer,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
     ListItem(
-        leadingContent = {
-            if (state.webSearch?.mode == WebSearchMode.PROVIDER && selectedBrand != null) {
-                SearchProviderIcon(providerId = selected?.id, name = selected?.name, builtin = (selected?.builtin == true), size = 40.dp)
-            } else {
-                Icon(imageVector = Icons.Filled.TravelExplore, contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        },
+        colors = androidx.compose.material3.ListItemDefaults.colors(
+            containerColor = androidx.compose.ui.graphics.Color.Transparent),
         headlineContent = { Text(stringResource(R.string.agents_edit_section_web_search)) },
         supportingContent = {
             Column {
@@ -451,6 +473,7 @@ private fun AgentWebSearchSelector(
         trailingContent = { Icon(Icons.Filled.ChevronRight, contentDescription = null) },
         modifier = Modifier.fillMaxWidth().clickable(enabled = !state.loading && !state.saving) { open = true },
     )
+    }
     if (open) {
         AlertDialog(
             onDismissRequest = { open = false },

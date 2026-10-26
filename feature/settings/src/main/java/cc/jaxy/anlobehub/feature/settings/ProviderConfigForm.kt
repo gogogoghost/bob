@@ -102,8 +102,8 @@ fun ProviderConfigForm(
         modifier = modifier
             .fillMaxWidth()
             .verticalScroll(rememberScrollState())
-            .padding(spacing.l),
-        verticalArrangement = Arrangement.spacedBy(spacing.m),
+            .padding(vertical = spacing.s),
+        verticalArrangement = Arrangement.spacedBy(spacing.xs),
     ) {
         if (special?.replacesApiKey == true) {
             SpecialFieldsBlock(

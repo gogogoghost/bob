@@ -54,15 +54,19 @@ fun MarkdownText(
 }
 
 /**
- * `[^1]` -> `[1](url)` using trailing `[^1]: ...` definitions (plain URL or
- * `[title](url)` form). Unknown refs degrade to plain `[1]` text.
+ * Citation markers -> `[🔗](url)`.
+ *
+ * Recognized (case-insensitive): `[^n]` (+ trailing `[^n]: url` definitions),
+ * `[citation:n]`, `[citations:n]`, and `【n】`. Unknown refs degrade to plain
+ * text, never to a dead link. The emoji is the only inline affordance; the
+ * tap-confirm dialog owns the actual navigation.
  */
 private fun String.resolveFootnotes(): String {
-    if (!contains("[^")) return this
+    var body = this
+    // Definition lines first: [^n]: <url> | [^n]: [title](url)
     val defs = mutableMapOf<String, String>()
-    // Definition lines: [^n]: <url> | [^n]: [title](url)
     val defPattern = Regex("""(?m)^\[\^(\d+)\]:\s*(.+)$""")
-    var body = defPattern.replace(this) { match ->
+    body = defPattern.replace(body) { match ->
         val url = Regex("""\((https?://[^)]+)\)""").find(match.groupValues[2])
             ?.groupValues?.getOrNull(1)
             ?: match.groupValues[2].trim().split(Regex("""\\s+""")).firstOrNull().orEmpty()
@@ -71,7 +75,7 @@ private fun String.resolveFootnotes(): String {
     }
     body = Regex("""\[\^(\d+)\]""").replace(body) { match ->
         val url = defs[match.groupValues[1]]
-        if (url != null) "[🔗]($url)" else "[${match.groupValues[1]}]"
+        if (url != null) "[🔗]($url)" else match.groupValues[1]
     }
     return body.replace(Regex("\n{3,}"), "\n\n").trim()
 }

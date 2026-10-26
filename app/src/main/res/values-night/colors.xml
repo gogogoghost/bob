@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Must match Compose DarkColors.background/surface -->
-    <color name="splash_background">#0F172A</color>
-    <color name="window_background">#0F172A</color>
+    <!-- Pinned to the Compose dark background in both modes: no white flash on launch. -->
+    <color name="splash_background">#14101F</color>
+    <color name="window_background">#14101F</color>
 </resources>

@@ -90,6 +90,7 @@ class ChatViewModel @Inject constructor(
         val webSearchReady: Boolean = false,
         val webSearchPolicy: WebSearchPolicy = WebSearchPolicy(),
         val webSearchOverride: WebSearchPolicy? = null,
+        val purePrompt: Boolean = false,
         val webSearchProviderName: String? = null,
         val streamingSearchActivity: WebSearchActivity? = null,
         val streamingCitations: List<WebCitation> = emptyList(),
@@ -99,6 +100,7 @@ class ChatViewModel @Inject constructor(
     val uiState: StateFlow<UiState> = _uiState.asStateFlow()
     private var temperature: Double? = null
     private var systemPrompt = ""
+    private var purePrompt = false
     private var streamJob: Job? = null
     private var activeResponse: ChatResponseBuffer? = null
     private var generation = 0L
@@ -156,7 +158,9 @@ class ChatViewModel @Inject constructor(
     private fun publishSearchPolicy() {
         val state = _uiState.value
         val settings = globalSearchSettings
-        val policy = state.webSearchOverride ?: settings?.policy ?: WebSearchPolicy()
+        // Pure prompt: the agent opted out of every app-added prompt. Search
+        // namespaces collapse to OFF (silently, not as an error).
+        val policy = if (purePrompt) WebSearchPolicy() else state.webSearchOverride ?: settings?.policy ?: WebSearchPolicy()
         val external = policy.mode == WebSearchMode.PROVIDER
         val selected = availableSearchProviders?.firstOrNull { it.id == policy.providerId }
         val ready = settings != null && agentSearchLoaded && (!external || availableSearchProviders != null)
@@ -196,6 +200,7 @@ class ChatViewModel @Inject constructor(
             agentSearchLoaded = true
             agentSearchLoading = false
             systemPrompt = config?.systemRole.orEmpty()
+            purePrompt = config?.purePrompt == true
             val needTopics = initialTopicId != null || _uiState.value.activeTopicId != null
             val topics = if (needTopics) (topicRepository.listTopics(agentId = effectiveAgentId()) as? AnResult.Ok)?.value.orEmpty() else emptyList()
             val topicId = _uiState.value.activeTopicId?.takeIf { id -> topics.any { it.id == id } }
@@ -215,6 +220,7 @@ class ChatViewModel @Inject constructor(
             _uiState.value = _uiState.value.copy(topics = topics, activeTopicId = topicId, models = models,
                 activeModel = model, modelsLoading = false, agentAvatar = config?.avatar?.takeIf(String::isNotBlank),
                 webSearchOverride = config?.webSearch,
+                purePrompt = config?.purePrompt == true,
                 openingMessage = config?.openingMessage?.takeIf(String::isNotBlank),
                 openingQuestions = config?.openingQuestions.orEmpty().filter(String::isNotBlank))
             publishSearchPolicy()
@@ -388,7 +394,7 @@ class ChatViewModel @Inject constructor(
             activeResponse = buffer
             var lastEmit = 0L
             completionRepository.stream(providerId, model.id, systemPrompt, history, temperature,
-                sessionId = topicId, searchPolicy = searchPolicy).collect { chunk ->
+                sessionId = topicId, searchPolicy = searchPolicy, purePrompt = purePrompt).collect { chunk ->
                 buffer.append(chunk)
                 val now = System.currentTimeMillis()
                 if (turn == generation && (now - lastEmit >= 80 || chunk.searchActivity != null || chunk.citations.isNotEmpty())) {

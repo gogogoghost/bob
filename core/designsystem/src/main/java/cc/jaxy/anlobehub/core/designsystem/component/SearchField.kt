@@ -1,23 +1,28 @@
 package cc.jaxy.anlobehub.core.designsystem.component
 
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import cc.jaxy.anlobehub.core.designsystem.theme.inputRowContainer
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.res.stringResource
 import cc.jaxy.anlobehub.core.designsystem.R as DsR
-import cc.jaxy.anlobehub.core.designsystem.theme.spacing
 
 /**
- * Shared list-filter search box (pill shape). All list screens MUST use
- * this instead of a hand-rolled OutlinedTextField.
+ * Shared list-filter search box: flat full-bleed row in plain surface, visually
+ * extending the app bar above it. The boundary comes from the icon + hint,
+ * not from a tinted background. All list screens MUST use this instead of a
+ * hand-rolled field.
  */
 @Composable
 fun SearchField(
@@ -26,14 +31,11 @@ fun SearchField(
     hint: String,
     modifier: Modifier = Modifier,
 ) {
-    val spacing = MaterialTheme.spacing
-    AnTextField(
+    TextField(
         value = query,
         onValueChange = onQueryChange,
-        label = hint,
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(horizontal = spacing.l, vertical = spacing.s),
+        modifier = modifier.fillMaxWidth(),
+        placeholder = { Text(hint) },
         leadingIcon = {
             Icon(imageVector = Icons.Filled.Search, contentDescription = null)
         },
@@ -48,5 +50,16 @@ fun SearchField(
             }
         },
         singleLine = true,
+        shape = RectangleShape,
+        colors = TextFieldDefaults.colors(
+            focusedContainerColor = MaterialTheme.colorScheme.surface,
+            unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+            disabledContainerColor = MaterialTheme.colorScheme.surface,
+            errorContainerColor = MaterialTheme.colorScheme.surface,
+            focusedIndicatorColor = Color.Transparent,
+            unfocusedIndicatorColor = Color.Transparent,
+            disabledIndicatorColor = Color.Transparent,
+            errorIndicatorColor = Color.Transparent,
+        ),
     )
 }

@@ -14,7 +14,7 @@
     <string name="agents_create_title">New agent</string>
     <string name="agents_create_title_label">Name</string>
     <string name="agents_create_title_required">Please enter a name</string>
-    <string name="agents_create_system_role_label">System role</string>
+    <string name="agents_create_system_role_label">System prompt</string>
     <string name="agents_create_model_label">Model</string>
     <string name="agents_create_model_auto">Auto</string>
     <string name="agents_manage_title">Manage agent</string>
@@ -62,4 +62,6 @@
     <string name="agents_avatar_upload">Choose image</string>
     <string name="agents_avatar_uploading">Saving locally…</string>
     <string name="agents_avatar_upload_failed">Unable to save image locally</string>
+    <string name="agents_pure_prompt_title">Pure prompt</string>
+    <string name="agents_pure_prompt_desc">Skip app-added search instructions and source injection; send only your system prompt and this turn.</string>
 </resources>

@@ -21,12 +21,12 @@ data class Agent(val id: String = "", val title: String? = null, val name: Strin
     val displayName: String get() = name?.takeIf(String::isNotBlank) ?: title?.takeIf(String::isNotBlank) ?: id
 }
 @Serializable
-data class AgentConfig(val title: String? = null, val description: String? = null, val systemRole: String? = null, val model: String? = null, val provider: String? = null, val temperature: Double? = null, val avatar: String? = null, val backgroundColor: String? = null, val openingMessage: String? = null, val openingQuestions: List<String> = emptyList(), val webSearch: WebSearchPolicy? = null)
+data class AgentConfig(val title: String? = null, val description: String? = null, val systemRole: String? = null, val model: String? = null, val provider: String? = null, val temperature: Double? = null, val avatar: String? = null, val backgroundColor: String? = null, val openingMessage: String? = null, val openingQuestions: List<String> = emptyList(), val webSearch: WebSearchPolicy? = null, val purePrompt: Boolean = false)
 
 interface AgentRepository {
     suspend fun listAgents(keyword: String? = null): AnResult<List<Agent>>
     suspend fun getConfig(agentId: String): AnResult<AgentConfig>
-    suspend fun create(title: String, systemRole: String? = null, model: String? = null, provider: String? = null, description: String? = null, avatar: String? = null, openingMessage: String? = null, openingQuestions: List<String> = emptyList(), webSearch: WebSearchPolicy? = null): AnResult<String>
+    suspend fun create(title: String, systemRole: String? = null, model: String? = null, provider: String? = null, description: String? = null, avatar: String? = null, openingMessage: String? = null, openingQuestions: List<String> = emptyList(), webSearch: WebSearchPolicy? = null, purePrompt: Boolean = false): AnResult<String>
     suspend fun updateConfig(agentId: String, fields: Map<String, JsonElement?>): AnResult<Unit>
     suspend fun remove(agentId: String): AnResult<Unit>
     suspend fun duplicate(agentId: String): AnResult<String>
@@ -77,10 +77,10 @@ class AgentRepositoryImpl @Inject constructor(private val dao: LocalDao, private
     override suspend fun getConfig(agentId: String): AnResult<AgentConfig> = runCatching {
         json.decodeFromJsonElement<StoredAgent>(read(dao.agent(agentId) ?: error("Agent not found"))).config
     }.toResult()
-    override suspend fun create(title: String, systemRole: String?, model: String?, provider: String?, description: String?, avatar: String?, openingMessage: String?, openingQuestions: List<String>, webSearch: WebSearchPolicy?): AnResult<String> {
+    override suspend fun create(title: String, systemRole: String?, model: String?, provider: String?, description: String?, avatar: String?, openingMessage: String?, openingQuestions: List<String>, webSearch: WebSearchPolicy?, purePrompt: Boolean): AnResult<String> {
         if (title.isBlank()) return AnResult.Err(AnError("INVALID_INPUT", "title is required"))
         val id = UUID.randomUUID().toString()
-        val config = AgentConfig(title, description, systemRole, model, provider, avatar = avatar, openingMessage = openingMessage, openingQuestions = openingQuestions.filter(String::isNotBlank), webSearch = webSearch)
+        val config = AgentConfig(title, description, systemRole, model, provider, avatar = avatar, openingMessage = openingMessage, openingQuestions = openingQuestions.filter(String::isNotBlank), webSearch = webSearch, purePrompt = purePrompt)
         val agent = Agent(id, title = title, description = description, avatar = avatar)
         return runCatching { dao.putAgent(AgentRow(id, json.encodeToString(StoredAgent(agent, config)))); id }.toResult()
     }

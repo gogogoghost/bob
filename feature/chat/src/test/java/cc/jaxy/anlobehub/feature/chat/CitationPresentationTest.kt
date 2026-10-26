@@ -13,7 +13,7 @@ class CitationPresentationTest {
     fun `UTF-16 offsets preserve emoji and Chinese with clickable source markers`() {
         val body = "🌍世界 has facts."
         val result = presentCitations(body, listOf(WebCitation(url, "来源", 2, 4)))
-        assertEquals("🌍世界 [1](<$url>) has facts.", result.markdown)
+        assertEquals("🌍世界 [🔗](<$url>) has facts.", result.markdown)
         assertEquals("来源", result.sources.single().title)
         assertEquals("🌍世界 has facts.", body)
     }
@@ -36,7 +36,7 @@ class CitationPresentationTest {
         val first = WebCitation(url, "Source", 0, 3)
         val second = first.copy(startIndex = 8, endIndex = 11)
         val result = presentCitations(body, listOf(first, first, second, second.copy(startIndex = null)))
-        assertEquals("One [1](<$url>) and two [1](<$url>)", result.markdown)
+        assertEquals("One [🔗](<$url>) and two [🔗](<$url>)", result.markdown)
         assertEquals(1, result.sources.size)
     }
 
@@ -60,7 +60,7 @@ class CitationPresentationTest {
     fun `multiple sources at one location are ordered and deduplicated`() {
         val other = "https://other.example/source"
         val result = presentCitations("Fact", listOf(WebCitation(url, "First", 0, 4), WebCitation(other, "Second", 0, 4)))
-        assertEquals("Fact [1](<$url>) [2](<$other>)", result.markdown)
+        assertEquals("Fact [🔗](<$url>) [🔗](<$other>)", result.markdown)
         assertEquals(listOf(url, other), result.sources.map { it.url })
     }
 
@@ -93,7 +93,7 @@ class CitationPresentationTest {
     fun `plain prose after Markdown code keeps its native citation`() {
         val body = "```\ncode\n```\nActual fact."
         val result = presentCitations(body, listOf(WebCitation(url, startIndex = body.indexOf("Actual"), endIndex = body.length)))
-        assertEquals("$body [1](<$url>)", result.markdown)
+        assertEquals("$body [🔗](<$url>)", result.markdown)
     }
 
     @Test
@@ -107,5 +107,37 @@ class CitationPresentationTest {
         }
         assertTrue(isSafeWebUrl(url))
         assertTrue(isSafeWebUrl("HTTP://example.com/path"))
+    }
+    @Test
+    fun `only the bare link emoji survives after a citation link`() {
+        val first = "https://first.example/a"
+        val citations = listOf(WebCitation(first, "First"))
+        val cases = mapOf(
+            "A[citation:1]来源2." to "A[🔗](<$first>).",
+            "A[citation:1] 来源2." to "A[🔗](<$first>) .",
+            "A[citation:1]source 2." to "A[🔗](<$first>).",
+            "A[citation:1][2](next)." to "A[🔗](<$first>)(next).",
+            "A[🔗](<$first>)来源2." to "A[🔗](<$first>).",
+            "A[🔗](<$first>) 2 people." to "A[🔗](<$first>) 2 people.",
+        )
+        for ((body, expected) in cases) {
+            assertEquals(expected, presentCitations(body, citations).markdown)
+        }
+    }
+    @Test
+    fun `bare emoji urls fold only for known sources`() {
+        val first = "https://first.example/a"
+        val citations = listOf(WebCitation(first, "First"))
+        // Known source: folds into one link, no raw URL text remains.
+        val folded = presentCitations("See 🔗https://first.example/a here.", citations)
+        assertEquals("See [🔗](<$first>) here.", folded.markdown)
+        assertEquals(listOf(first), folded.usedSources.map { it.url })
+        // Unknown URL: stays visible text, never becomes a clickable link.
+        val exotic = presentCitations("See 🔗https://evil.example/x here.", citations)
+        assertTrue("🔗https://evil.example/x" in exotic.markdown)
+        assertTrue(exotic.usedSources.isEmpty())
+        // Folded link with a numbering tail collapses to the bare emoji.
+        val tailed = presentCitations("See 🔗https://first.example/a来源2 end.", citations)
+        assertEquals("See [🔗](<$first>) end.", tailed.markdown)
     }
 }

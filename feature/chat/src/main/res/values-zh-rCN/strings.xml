@@ -59,4 +59,9 @@
     <string name="chat_web_search_sources">来源</string>
     <string name="chat_action_retry">重试</string>
     <string name="chat_retry_nothing">还没有可重试的内容，先发送一条消息。</string>
+    <string name="chat_search_summary_results">已用%1$s搜索 · %2$d 条来源 · %3$s</string>
+    <string name="chat_search_summary_query">已用%1$s搜索 · %2$s</string>
+    <string name="chat_search_summary_count">已用%1$s搜索 · %2$d 条来源</string>
+    <string name="chat_search_summary_done">已用%1$s搜索</string>
+    <string name="chat_search_sources_count">找到 %1$d 条来源</string>
 </resources>

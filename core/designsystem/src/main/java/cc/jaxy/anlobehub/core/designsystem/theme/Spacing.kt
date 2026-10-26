@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
@@ -38,6 +39,15 @@ val MaterialTheme.spacing: AnSpacing
     @Composable
     @ReadOnlyComposable
     get() = LocalSpacing.current
+
+/**
+ * 输入行/选择器行的容器色：surfaceContainerHighest。浅色柔灰紫、深色灰紫，
+ * 与 surface 页面底拉开一档。App-theme-aware（NOT system）。
+ */
+val MaterialTheme.inputRowContainer: androidx.compose.ui.graphics.Color
+    @Composable
+    @ReadOnlyComposable
+    get() = colorScheme.surfaceContainerHighest
 
 // 间距预览：浅色
 @Preview(name = "Spacing-Light")

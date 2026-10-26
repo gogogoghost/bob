@@ -55,6 +55,7 @@ import cc.jaxy.anlobehub.core.designsystem.text.UiText
 import cc.jaxy.anlobehub.core.designsystem.text.resolve
 import cc.jaxy.anlobehub.core.designsystem.theme.AnlobehubTheme
 import cc.jaxy.anlobehub.core.designsystem.theme.hapticClick
+import cc.jaxy.anlobehub.core.designsystem.theme.inputRowContainer
 import cc.jaxy.anlobehub.core.designsystem.theme.spacing
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -218,7 +219,7 @@ private fun AgentRow(
     val name = agent.displayName() ?: stringResource(R.string.agents_untitled)
     Card(
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+            containerColor = MaterialTheme.inputRowContainer,
         ),
         onClick = {
             hapticClick(view)

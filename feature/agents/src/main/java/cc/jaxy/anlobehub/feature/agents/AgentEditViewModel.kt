@@ -50,6 +50,7 @@ class AgentEditViewModel @Inject constructor(
         val openingMessage: String = "",
         val openingQuestions: List<String> = emptyList(),
         val webSearch: WebSearchPolicy? = null,
+        val purePrompt: Boolean = false,
         val searchProviders: List<WebSearchProvider> = emptyList(),
         val providersError: Boolean = false,
         val titleError: Boolean = false,
@@ -118,6 +119,7 @@ class AgentEditViewModel @Inject constructor(
                         openingMessage = c.openingMessage.orEmpty(),
                         openingQuestions = c.openingQuestions,
                         webSearch = c.webSearch,
+                        purePrompt = c.purePrompt,
                         loading = false,
                         loadFailed = false,
                         error = null,
@@ -141,6 +143,8 @@ class AgentEditViewModel @Inject constructor(
         if (_uiState.value.loading || _uiState.value.saving) return
         edit { copy(webSearch = v, saved = false) }
     }
+
+    fun onPurePromptChange(v: Boolean) = edit { copy(purePrompt = v, saved = false) }
 
     fun onQuestionChange(index: Int, v: String) = edit {
         copy(
@@ -211,6 +215,7 @@ class AgentEditViewModel @Inject constructor(
                         openingMessage = cur.openingMessage.trim().takeIf { it.isNotBlank() },
                         openingQuestions = questions,
                         webSearch = cur.webSearch,
+                        purePrompt = cur.purePrompt,
                     )
                 ) {
                     is AnResult.Ok -> _uiState.value = _uiState.value.copy(
@@ -237,6 +242,7 @@ class AgentEditViewModel @Inject constructor(
                 put("model", JsonPrimitive(cur.model.trim()))
                 put("provider", JsonPrimitive(cur.provider.trim()))
                 put("webSearch", cur.webSearch?.let { Json.encodeToJsonElement(it) } ?: JsonNull)
+                put("purePrompt", JsonPrimitive(cur.purePrompt))
             }
             when (val result = agentRepository.updateConfig(cur.agentId, fields)) {
                 is AnResult.Ok -> _uiState.value = _uiState.value.copy(saving = false, saved = true)

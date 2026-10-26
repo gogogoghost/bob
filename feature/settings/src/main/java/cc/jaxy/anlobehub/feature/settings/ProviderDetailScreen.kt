@@ -31,7 +31,7 @@ import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Card
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -73,6 +73,7 @@ import cc.jaxy.anlobehub.core.designsystem.text.UiText
 import cc.jaxy.anlobehub.core.designsystem.text.resolve
 import cc.jaxy.anlobehub.core.designsystem.text.toUiText
 import cc.jaxy.anlobehub.core.designsystem.theme.spacing
+import cc.jaxy.anlobehub.core.designsystem.theme.inputRowContainer
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -567,11 +568,14 @@ private fun ProviderDetailBody(
                     SectionTitle(text = stringResource(R.string.provider_detail_section_remote_models))
                 }
                 item(key = "remote-card") {
-                    Card(modifier = Modifier.padding(horizontal = spacing.l)) {
+                    Surface(
+                        color = MaterialTheme.inputRowContainer,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(spacing.l),
+                                .padding(horizontal = spacing.l, vertical = spacing.m),
                             verticalArrangement = Arrangement.spacedBy(spacing.xs),
                         ) {
                             Text(

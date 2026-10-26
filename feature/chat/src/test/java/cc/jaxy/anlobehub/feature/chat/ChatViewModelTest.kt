@@ -68,7 +68,7 @@ class ChatViewModelTest {
             }
         }
         val completions = object : ChatCompletionRepository {
-            override fun stream(providerId: String, modelId: String, systemPrompt: String, history: List<ChatMessage>, temperature: Double?, sessionId: String?, searchPolicy: WebSearchPolicy): Flow<ChatStreamChunk> {
+            override fun stream(providerId: String, modelId: String, systemPrompt: String, history: List<ChatMessage>, temperature: Double?, sessionId: String?, searchPolicy: WebSearchPolicy, purePrompt: Boolean): Flow<ChatStreamChunk> {
                 val channel = Channel<ChatStreamChunk>(Channel.UNLIMITED)
                 channels += channel
                 return flow { for (chunk in channel) emit(chunk) }
@@ -179,6 +179,64 @@ class ChatViewModelTest {
             assertTrue(fixtures.all { it.vm.uiState.value.webSearchReady })
         } finally {
             fixtures.forEach { it.store.clear() }
+            runCurrent()
+        }
+    }
+
+    @Test
+    fun `pure prompt agent collapses search to off without blocking send`() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        val preferences = TestSearchPreferences(WebSearchPolicy(WebSearchMode.PROVIDER, "searxng"))
+        var seenPolicy = WebSearchPolicy(WebSearchMode.PROVIDER, "searxng")
+        var seenPure = false
+        val chunks = flow {
+            emit(ChatStreamChunk(textDelta = "Pure answer"))
+            emit(ChatStreamChunk(completion = ChatCompletion(ChatCompletionStatus.COMPLETED, "stop")))
+        }
+        val persisted = mutableListOf<ChatMessage>()
+        val models = dependency(ModelRepository::class.java) { _ -> AnResult.Ok(listOf(AIModel(id = "local-model", providerId = "custom-local", enabled = true))) }
+        val topics = dependency(TopicRepository::class.java) { name ->
+            when (name) {
+                "createTopic" -> AnResult.Ok("search-topic")
+                "listTopics" -> AnResult.Ok(listOf(ChatTopic(id = "search-topic")))
+                else -> error("Unexpected topic operation $name")
+            }
+        }
+        val messages = object : MessageRepository {
+            override suspend fun listMessages(topicId: String?, agentId: String?) = AnResult.Ok(persisted.toList())
+            override suspend fun saveMessage(topicId: String, message: ChatMessage): AnResult<Unit> {
+                persisted += message
+                return AnResult.Ok(Unit)
+            }
+        }
+        val completions = object : ChatCompletionRepository {
+            override fun stream(providerId: String, modelId: String, systemPrompt: String, history: List<ChatMessage>,
+                temperature: Double?, sessionId: String?, searchPolicy: WebSearchPolicy, purePrompt: Boolean): Flow<ChatStreamChunk> {
+                seenPolicy = searchPolicy
+                seenPure = purePrompt
+                assertEquals("", systemPrompt)
+                return chunks
+            }
+        }
+        val agents = dependency(AgentRepository::class.java) { name ->
+            if (name == "getConfig") AnResult.Ok(AgentConfig(webSearch = WebSearchPolicy(WebSearchMode.PROVIDER, "searxng"), purePrompt = true)) else error("Unexpected $name")
+        }
+        val files = dependency(FileRepository::class.java) { error("Unexpected file operation $it") }
+        val vm = ChatViewModel(SavedStateHandle(mapOf("agentId" to "search-agent")),
+            messages, topics, models, agents, files, completions, preferences, TestSearchProviders())
+        val store = ViewModelStore().apply { put("pure", vm) }
+        try {
+            runCurrent()
+            assertEquals(WebSearchMode.OFF, vm.uiState.value.webSearchPolicy.mode)
+            assertTrue(vm.uiState.value.webSearchReady)
+            assertTrue(vm.uiState.value.webSearchAvailable)
+            vm.send("Just answer")
+            runCurrent()
+            assertEquals(WebSearchMode.OFF, seenPolicy.mode)
+            assertTrue(seenPure)
+            assertEquals(listOf("Just answer", "Pure answer"), vm.uiState.value.messages.map { it.content })
+        } finally {
+            store.clear()
             runCurrent()
         }
     }
@@ -344,7 +402,7 @@ class ChatViewModelTest {
         }
         val completions = object : ChatCompletionRepository {
             override fun stream(providerId: String, modelId: String, systemPrompt: String, history: List<ChatMessage>,
-                temperature: Double?, sessionId: String?, searchPolicy: WebSearchPolicy): Flow<ChatStreamChunk> = chunks
+                temperature: Double?, sessionId: String?, searchPolicy: WebSearchPolicy, purePrompt: Boolean): Flow<ChatStreamChunk> = chunks
         }
         val agents = dependency(AgentRepository::class.java) { name ->
             if (name == "getConfig" && agentConfig != null) agentConfig() else error("Unexpected agent operation $name")

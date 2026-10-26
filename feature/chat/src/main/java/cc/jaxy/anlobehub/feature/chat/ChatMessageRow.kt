@@ -87,8 +87,12 @@ fun AssistantMessageRow(
     val nativeCitations = if (isStreaming) streamingCitations else message.citations
     val searching = searchActivity?.stage == WebSearchStage.SEARCHING || searchActivity?.stage == WebSearchStage.READING
     val presentation = remember(body, nativeCitations) { presentCitations(body, nativeCitations) }
-    val citations = remember(body, presentation.sources, searchActivity) {
-        if (searchActivity != null || nativeCitations.isNotEmpty()) presentation.sources else parseCitations(body)
+    val citations = remember(body, presentation.sources, presentation.usedSources, searchActivity) {
+        // Cards mirror the rendered text: only sources actually linked from the
+        // answer body. Unreferenced search hits never render as cards (no
+        // cards-before-answer while streaming, no orphan list when settled).
+        if (searchActivity != null || nativeCitations.isNotEmpty()) presentation.usedSources
+        else parseCitations(body)
     }
     val citationByUrl = remember(citations) { citations.associateBy { it.url } }
     var linkPreview by remember(message.id) { mutableStateOf<ChatCitation?>(null) }
@@ -126,12 +130,18 @@ fun AssistantMessageRow(
                 )
             }
         }
-        searchActivity?.let { SearchActivityRow(activity = it, isStreaming = isStreaming) }
-        if (!reasoning.isNullOrBlank() || (isStreaming && body.isBlank() && !searching)) {
+        // Local-agent feel: no fixed engine banner. Search appears only when the
+        // model actually searched, inside the thinking trace (collapsed or not).
+        val showThinking = !reasoning.isNullOrBlank() || searchActivity != null ||
+            (isStreaming && body.isBlank() && !searching)
+        if (showThinking) {
             ThinkingCard(
                 content = reasoning.orEmpty(),
                 thinking = isStreaming && body.isBlank(),
                 durationSecs = reasoningSecs,
+                searchActivity = searchActivity,
+                sourceCount = citations.size,
+                active = isStreaming,
             )
         }
         if (body.isNotBlank()) {
@@ -203,34 +213,136 @@ fun AssistantMessageRow(
     }
 }
 
+/** Unified thinking trace: reasoning + live search activity in one collapsible card.
+ *
+ * Local-first: no standalone engine banner. When the model did not search,
+ * this is just the reasoning trace. When it did, the header shows the live
+ * search state while streaming (and a one-line summary when settled), and the
+ * expanded body lists queries/engine/sources above the reasoning text.
+ */
 @Composable
-private fun SearchActivityRow(activity: WebSearchActivity, isStreaming: Boolean) {
-    val active = isStreaming && (activity.stage == WebSearchStage.SEARCHING || activity.stage == WebSearchStage.READING)
-    val label = when (activity.stage) {
-        WebSearchStage.SEARCHING -> if (isStreaming) R.string.chat_web_search_searching else R.string.chat_web_search_incomplete
-        WebSearchStage.READING -> if (isStreaming) R.string.chat_web_search_reading else R.string.chat_web_search_incomplete
-        WebSearchStage.COMPLETED -> R.string.chat_web_search_completed
-        WebSearchStage.FAILED -> R.string.chat_web_search_failed
+private fun ThinkingCard(
+    content: String,
+    thinking: Boolean,
+    durationSecs: Double? = null,
+    modifier: Modifier = Modifier,
+    searchActivity: WebSearchActivity? = null,
+    sourceCount: Int = 0,
+    active: Boolean = false,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val spacing = MaterialTheme.spacing
+    val searching = searchActivity?.stage == WebSearchStage.SEARCHING ||
+        searchActivity?.stage == WebSearchStage.READING
+    val liveSearch = active && searching
+    // Collapsed header: live search state wins while streaming; settled shows a
+    // one-line search summary next to the thinking state.
+    val header: String = when {
+        liveSearch && searchActivity?.stage == WebSearchStage.SEARCHING ->
+            stringResource(R.string.chat_web_search_searching)
+        liveSearch -> stringResource(R.string.chat_web_search_reading)
+        searchActivity != null && searchActivity.stage == WebSearchStage.FAILED ->
+            stringResource(R.string.chat_web_search_failed)
+        searchActivity != null -> searchSummary(searchActivity, sourceCount)
+        thinking -> stringResource(R.string.chat_thinking)
+        durationSecs != null -> stringResource(R.string.chat_thought_secs, durationSecs)
+        else -> stringResource(R.string.chat_thought_done)
     }
-    Column(verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.xs)) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.s),
-        ) {
-            if (active) CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
-            Text(
-                text = stringResource(label),
-                style = MaterialTheme.typography.labelMedium,
-                color = if (activity.stage == WebSearchStage.FAILED) MaterialTheme.colorScheme.error
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+        modifier = modifier.fillMaxWidth(),
+        onClick = { expanded = !expanded },
+    ) {
+        Column(modifier = Modifier.padding(horizontal = spacing.m, vertical = spacing.s)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(spacing.s),
+            ) {
+                if (thinking || liveSearch) {
+                    ThinkingDots()
+                } else if (searchActivity != null) {
+                    SearchProviderIcon(
+                        providerId = searchActivity.providerId,
+                        name = searchActivity.providerName,
+                        builtin = searchActivity.providerBuiltin,
+                        size = 18.dp,
+                    )
+                } else {
+                    Icon(
+                        imageVector = Icons.Filled.Psychology,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+                Text(
+                    text = header,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (thinking || liveSearch) {
+                        MaterialTheme.colorScheme.primary
+                    } else if (searchActivity?.stage == WebSearchStage.FAILED) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    modifier = Modifier.weight(1f),
+                )
+                Icon(
+                    imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+            if (expanded) {
+                searchActivity?.let { activity ->
+                    SearchDetail(
+                        activity = activity,
+                        sourceCount = sourceCount,
+                        modifier = Modifier.padding(top = spacing.s),
+                    )
+                }
+                if (content.isNotBlank()) {
+                    MarkdownText(
+                        markdown = content,
+                        modifier = Modifier.padding(top = spacing.s),
+                    )
+                }
+            }
         }
+    }
+}
+
+/** Settled one-liner: engine + query + result count (or failure). */
+@Composable
+private fun searchSummary(activity: WebSearchActivity, sourceCount: Int): String {
+    val engine = activity.providerName?.takeIf(String::isNotBlank)
+        ?: activity.providerId?.takeIf(String::isNotBlank)
+        ?: stringResource(R.string.chat_web_search_native)
+    val query = activity.queries.firstOrNull { it.isNotBlank() }
+    return when {
+        sourceCount > 0 && query != null ->
+            stringResource(R.string.chat_search_summary_results, engine, sourceCount, query)
+        query != null -> stringResource(R.string.chat_search_summary_query, engine, query)
+        sourceCount > 0 -> stringResource(R.string.chat_search_summary_count, engine, sourceCount)
+        else -> stringResource(R.string.chat_search_summary_done, engine)
+    }
+}
+
+/** Expanded search trace: engine, queries, result count, error. */
+@Composable
+private fun SearchDetail(activity: WebSearchActivity, sourceCount: Int, modifier: Modifier = Modifier) {
+    val spacing = MaterialTheme.spacing
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(spacing.xs)) {
         activity.providerId?.let { id ->
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.s),
+                horizontalArrangement = Arrangement.spacedBy(spacing.s),
             ) {
-                SearchProviderIcon(providerId = id, name = activity.providerName, builtin = activity.providerBuiltin, size = 20.dp)
+                SearchProviderIcon(providerId = id, name = activity.providerName,
+                    builtin = activity.providerBuiltin, size = 20.dp)
                 Text(
                     text = activity.providerName?.takeIf(String::isNotBlank) ?: id,
                     style = MaterialTheme.typography.labelSmall,
@@ -245,73 +357,15 @@ private fun SearchActivityRow(activity: WebSearchActivity, isStreaming: Boolean)
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+        if (sourceCount > 0) {
+            Text(
+                text = stringResource(R.string.chat_search_sources_count, sourceCount),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
         activity.error?.takeIf(String::isNotBlank)?.let { error ->
             Text(text = error, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-        }
-    }
-}
-
-/** Collapsible deep-thinking trace. Collapsed by default (web parity). */
-@Composable
-private fun ThinkingCard(
-    content: String,
-    thinking: Boolean,
-    durationSecs: Double? = null,
-    modifier: Modifier = Modifier,
-) {
-    var expanded by remember { mutableStateOf(false) }
-    val spacing = MaterialTheme.spacing
-    Surface(
-        shape = RoundedCornerShape(12.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-        modifier = modifier.fillMaxWidth(),
-        onClick = { expanded = !expanded },
-    ) {
-        Column(modifier = Modifier.padding(horizontal = spacing.m, vertical = spacing.s)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(spacing.s),
-            ) {
-                if (thinking) {
-                    ThinkingDots()
-                } else {
-                    Icon(
-                        imageVector = Icons.Filled.Psychology,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(18.dp),
-                    )
-                }
-                Text(
-                    text = if (thinking) {
-                        stringResource(R.string.chat_thinking)
-                    } else if (durationSecs != null) {
-                        stringResource(R.string.chat_thought_secs, durationSecs)
-                    } else {
-                        stringResource(R.string.chat_thought_done)
-                    },
-                    style = MaterialTheme.typography.labelMedium,
-                    color = if (thinking) {
-                        MaterialTheme.colorScheme.primary
-                    } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    },
-                    modifier = Modifier.weight(1f),
-                )
-                Icon(
-                    imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(18.dp),
-                )
-            }
-            if (expanded && content.isNotBlank()) {
-                MarkdownText(
-                    markdown = content,
-                    modifier = Modifier.padding(top = spacing.s),
-                )
-            }
         }
     }
 }

@@ -20,8 +20,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -31,9 +31,10 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import cc.jaxy.anlobehub.core.designsystem.R
 import cc.jaxy.anlobehub.core.designsystem.theme.AnlobehubTheme
+import cc.jaxy.anlobehub.core.designsystem.theme.inputRowContainer
 
-// 通用输入框：filled 风格 —— 无左右边框，以 surfaceContainerHigh 背景分区，
-// 形状取 MaterialTheme.shapes.large。error 态保留红色指示线 + supporting。
+// 通用输入框：扁平风格 —— 与 ListItem 选择器行同语言：surfaceContainerHighest 背景、全宽、
+// 无圆角、无边框、无指示线，以背景色与页面分区。error 只保留红色字 + supporting。
 @Composable
 fun AnTextField(
     value: String,
@@ -49,6 +50,7 @@ fun AnTextField(
     isError: Boolean = false,
     singleLine: Boolean = true,
     maxLines: Int = if (singleLine) 1 else Int.MAX_VALUE,
+    minLines: Int = 1,
     keyboardActions: KeyboardActions = KeyboardActions.Default,
     readOnly: Boolean = false,
     enabled: Boolean = true,
@@ -56,7 +58,7 @@ fun AnTextField(
     TextField(
         value = value,
         onValueChange = onValueChange,
-        modifier = modifier.clip(MaterialTheme.shapes.large),
+        modifier = modifier,
         label = { Text(label) },
         placeholder = placeholder,
         keyboardOptions = keyboardOptions,
@@ -68,10 +70,15 @@ fun AnTextField(
         isError = isError,
         singleLine = singleLine,
         maxLines = maxLines,
+        minLines = minLines,
         readOnly = readOnly,
         enabled = enabled,
-        shape = MaterialTheme.shapes.large,
+        shape = RectangleShape,
         colors = TextFieldDefaults.colors(
+            focusedContainerColor = MaterialTheme.inputRowContainer,
+            unfocusedContainerColor = MaterialTheme.inputRowContainer,
+            disabledContainerColor = MaterialTheme.inputRowContainer,
+            errorContainerColor = MaterialTheme.inputRowContainer,
             focusedIndicatorColor = Color.Transparent,
             unfocusedIndicatorColor = Color.Transparent,
             disabledIndicatorColor = Color.Transparent,
