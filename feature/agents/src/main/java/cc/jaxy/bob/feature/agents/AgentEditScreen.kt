@@ -264,6 +264,8 @@ private fun AgentEditBody(
                 showAvatarPicker = false
             }
         }
+        // Avatar + name in one tappable row: no labels needed, the affordance
+        // is the avatar itself plus the chevron.
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -277,17 +279,14 @@ private fun AgentEditBody(
                 avatarUrl = state.avatar.takeIf { it.isNotBlank() },
                 size = 56.dp,
             )
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = stringResource(R.string.agents_edit_avatar_label),
-                    style = MaterialTheme.typography.bodyLarge,
-                )
-                Text(
-                    text = stringResource(R.string.agents_avatar_tap_to_change),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
+            Text(
+                text = state.title.takeIf { it.isNotBlank() }
+                    ?: stringResource(R.string.agents_untitled),
+                style = MaterialTheme.typography.titleMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
             Icon(
                 imageVector = Icons.Filled.ChevronRight,
                 contentDescription = null,

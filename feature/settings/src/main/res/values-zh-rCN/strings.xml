@@ -201,9 +201,6 @@
     <string name="provider_detail_website">供应商网站</string>
     <string name="provider_model_no_chat_adapter">仅为目录条目；未实现本地对话适配器</string>
 
-    <string name="web_search_needs_key">需要 API 密钥</string>
-    <string name="web_search_needs_endpoint">需要配置服务地址</string>
-    <string name="web_search_ready">就绪，可选为默认方式</string>
     <string name="web_search_test">测试搜索</string>
     <string name="web_search_testing">测试中…</string>
     <string name="web_search_test_ok">搜索可用</string>

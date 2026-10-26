@@ -155,26 +155,14 @@ private fun SearchProviderRow(
     onToggle: (String, Boolean) -> Unit,
 ) {
     val switchDescription = stringResource(R.string.web_search_enable_named, provider.name)
-    val status = when {
-        provider.enabled -> null
-        provider.protocol == cc.jaxy.bob.core.data.search.WebSearchProtocol.SEARXNG && provider.endpoint.isBlank() ->
-            stringResource(R.string.web_search_needs_endpoint)
-        provider.requiresApiKey -> stringResource(R.string.web_search_needs_key)
-        provider.endpoint.isBlank() -> stringResource(R.string.web_search_needs_endpoint)
-        else -> stringResource(R.string.web_search_ready)
-    }
     Card {
         ListItem(
             leadingContent = { SearchProviderIcon(providerId = provider.id, name = provider.name, builtin = provider.builtin) },
             headlineContent = { Text(provider.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-            supportingContent = {
-                Column {
-                    if (!provider.builtin) Text(provider.protocol.displayName)
-                    status?.let {
-                        Text(it, style = MaterialTheme.typography.labelSmall,
-                            color = if (provider.enabled) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error)
-                    }
-                }
+            supportingContent = if (!provider.builtin) {
+                { Text(provider.protocol.displayName) }
+            } else {
+                null
             },
             trailingContent = {
                 Switch(checked = provider.enabled, onCheckedChange = { onToggle(provider.id, it) },

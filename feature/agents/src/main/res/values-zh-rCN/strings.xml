@@ -54,7 +54,6 @@
     <string name="agents_edit_add_question">添加问题</string>
 
     <string name="agents_avatar_pick_title">选择头像</string>
-    <string name="agents_avatar_tap_to_change">点击更换</string>
     <string name="agents_avatar_custom_url">使用图片链接</string>
     <string name="agents_avatar_use_url">使用该链接</string>
 

@@ -203,9 +203,6 @@
     <string name="provider_models_search_hint">Search models</string>
     <string name="provider_models_search_empty">No matching models</string>
 
-    <string name="web_search_needs_key">Needs API key</string>
-    <string name="web_search_needs_endpoint">Needs endpoint</string>
-    <string name="web_search_ready">Ready to select</string>
     <string name="web_search_test">Test search</string>
     <string name="web_search_testing">Testing…</string>
     <string name="web_search_test_ok">Search works</string>

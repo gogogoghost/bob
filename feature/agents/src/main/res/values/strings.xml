@@ -55,7 +55,6 @@
     <string name="agents_edit_add_question">Add question</string>
 
     <string name="agents_avatar_pick_title">Choose avatar</string>
-    <string name="agents_avatar_tap_to_change">Tap to change</string>
     <string name="agents_avatar_custom_url">Use image URL instead</string>
     <string name="agents_avatar_use_url">Use this URL</string>
 
