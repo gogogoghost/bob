@@ -490,7 +490,9 @@ private fun ProviderDetailBody(
                 SettingRow(
                     icon = Icons.Filled.Key,
                     title = stringResource(R.string.provider_detail_section_credentials),
-                    subtitle = if (configured) {
+                    subtitle = if (spec.isOAuth || detail.authType.equals("oauthDeviceFlow", ignoreCase = true)) {
+                        stringResource(R.string.provider_oauth_description, detail.name ?: detail.id)
+                    } else if (configured) {
                         stringResource(R.string.provider_detail_credentials_set)
                     } else {
                         stringResource(R.string.provider_detail_credentials_unset)

@@ -1,5 +1,7 @@
 package cc.jaxy.anlobehub.core.data.local
 
+import cc.jaxy.anlobehub.core.common.util.providerAdapterType
+import cc.jaxy.anlobehub.core.common.util.providerDefaultEndpoint
 import java.io.File
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.booleanOrNull
@@ -39,6 +41,19 @@ class BundledProviderCatalogTest {
         assertEquals(0, models.count { it.getValue("providerId").jsonPrimitive.content !in providerIds })
         assertEquals(21, providers.count { it.getValue("chatSupported").jsonPrimitive.booleanOrNull == true })
         assertEquals(585, models.count { it.getValue("chatSupported").jsonPrimitive.booleanOrNull == true })
+        val adapters = providers.associate { provider ->
+            val id = provider.getValue("id").jsonPrimitive.content
+            id to providerAdapterType(id, provider["protocol"]?.jsonPrimitive?.content, provider["adapterType"]?.jsonPrimitive?.content)
+        }
+        assertEquals(81, adapters.values.count { it != null })
+        assertEquals(setOf("fal", "comfyui", "bfl", "replicate"), adapters.filterValues { it == null }.keys)
+        assertEquals(1_661, models.count {
+            it.getValue("type").jsonPrimitive.content == "chat" && adapters[it.getValue("providerId").jsonPrimitive.content] != null
+        })
+        val configuredEndpoints = setOf("azure", "azureai", "bedrock", "cloudflare", "vertexai", "newapi", "higress")
+        adapters.filterValues { it != null }.keys.filterNot { it in configuredEndpoints }.forEach {
+            assertTrue("Missing real default endpoint for $it", !providerDefaultEndpoint(it).isNullOrBlank())
+        }
         assertTrue(providers.none { (it["apiKeyUrl"]?.jsonPrimitive?.content ?: "").contains("lobehub") })
     }
 }

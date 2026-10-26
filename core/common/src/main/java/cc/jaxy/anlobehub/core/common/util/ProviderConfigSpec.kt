@@ -89,7 +89,7 @@ private fun ep(placeholder: String, title: String? = null, desc: String? = null)
     EndpointField(placeholder, title, desc)
 
 // ---------------------------------------------------------------------------
-// 86-card settings table: id -> spec (card-level, before detail overrides).
+// Provider settings table: id -> spec (card-level, before detail overrides).
 // Proxy placeholders come from `settings.proxyUrl.placeholder`.
 // ---------------------------------------------------------------------------
 
@@ -142,7 +142,7 @@ private val CARD_SPECS: Map<String, ProviderConfigSpec> = mapOf(
     ),
     "comfyui" to ProviderConfigSpec(disableBrowserRequest = true),
     "deepseek" to ProviderConfigSpec(
-        endpoint = ep("https://api.deepseek.com"), checkModel = "deepseek-v4-flash",
+        endpoint = ep("https://api.deepseek.com/v1"), checkModel = "deepseek-v4-flash",
     ),
     "fal" to ProviderConfigSpec(disableBrowserRequest = true),
     "fireworksai" to ProviderConfigSpec(
@@ -197,7 +197,7 @@ private val CARD_SPECS: Map<String, ProviderConfigSpec> = mapOf(
     ),
     "kimicodingplan" to ProviderConfigSpec(
         endpoint = ep("https://api.kimi.com/coding"),
-        disableBrowserRequest = true, checkModel = "kimi-k2.5",
+        disableBrowserRequest = true, checkModel = "kimi-for-coding",
     ),
     "lmstudio" to ProviderConfigSpec(
         endpoint = ep("http://127.0.0.1:1234/v1"),
@@ -219,7 +219,7 @@ private val CARD_SPECS: Map<String, ProviderConfigSpec> = mapOf(
         disableBrowserRequest = true, checkModel = "MiniMax-M2.7",
     ),
     "mistral" to ProviderConfigSpec(
-        endpoint = ep("https://api.mistral.ai"),
+        endpoint = ep("https://api.mistral.ai/v1"),
         disableBrowserRequest = true, checkModel = "ministral-3b-latest",
     ),
     "modelscope" to ProviderConfigSpec(
@@ -235,7 +235,7 @@ private val CARD_SPECS: Map<String, ProviderConfigSpec> = mapOf(
         checkModel = "Qwen/Qwen2.5-Coder-7B",
     ),
     "newapi" to ProviderConfigSpec(
-        endpoint = ep("https://any-newapi-provider.com/"),
+        endpoint = ep("https://your.new-api-provider.com"),
         checkModel = "gpt-4o-mini",
     ),
     "novita" to ProviderConfigSpec(
@@ -263,11 +263,11 @@ private val CARD_SPECS: Map<String, ProviderConfigSpec> = mapOf(
         checkModel = "gpt-5.2",
     ),
     "opencodecodingplan" to ProviderConfigSpec(
-        endpoint = ep("https://opencode.ai/zen/go/v1"),
+        endpoint = ep("https://opencode.ai/inference/go/v1"),
         disableBrowserRequest = true, checkModel = "glm-5.1",
     ),
     "opencodezen" to ProviderConfigSpec(
-        endpoint = ep("https://opencode.ai/zen/v1"),
+        endpoint = ep("https://opencode.ai/inference/v1"),
         checkModel = "claude-sonnet-4-5",
     ),
     "openrouter" to ProviderConfigSpec(
@@ -404,7 +404,11 @@ fun customProviderSpec(): ProviderConfigSpec = ProviderConfigSpec(
  */
 fun providerConfigSpec(providerId: String, source: String?): ProviderConfigSpec {
     if (source == "custom") return customProviderSpec()
-    return CARD_SPECS[providerId.lowercase()]
+    val spec = CARD_SPECS[providerId.lowercase()]
         ?: ProviderConfigSpec(endpoint = ep(GENERIC_ENDPOINT_PLACEHOLDER))
+    val defaultEndpoint = providerDefaultEndpoint(providerId)
+    return if (defaultEndpoint != null && (spec.endpoint == null || spec.endpoint.placeholder == GENERIC_ENDPOINT_PLACEHOLDER)) {
+        spec.copy(endpoint = ep(defaultEndpoint))
+    } else spec
 }
 

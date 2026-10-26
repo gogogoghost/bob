@@ -37,4 +37,6 @@ implementation(project(":core:common"))
     implementation(libs.serialization.json)
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)
+    testImplementation(libs.junit)
+    testImplementation(libs.coroutines.test)
 }

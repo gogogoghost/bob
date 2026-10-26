@@ -75,6 +75,150 @@ class ProviderRemoteModelDiscoveryTest {
         }
     }
 
+    @Test
+    fun `connectivity probes selected model rather than model listing`() = runBlocking {
+        val body = AtomicReference<String?>()
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
+            createContext("/prefix/v1/chat/completions") { exchange ->
+                body.set(exchange.requestBody.bufferedReader().use { it.readText() })
+                val response = """{"choices":[{"message":{"role":"assistant","content":"Hi"}}]}""".toByteArray()
+                exchange.responseHeaders.add("Content-Type", "application/json")
+                exchange.sendResponseHeaders(200, response.size.toLong())
+                exchange.responseBody.use { it.write(response) }
+            }
+            start()
+        }
+        try {
+            val id = "custom-check"
+            val providers = linkedMapOf(id to ProviderRow(id, "Local", "custom", true,
+                Json.encodeToString(mapOf("baseURL" to "http://127.0.0.1:${server.address.port}/prefix/v1",
+                    "__sdkType" to "openai", "__checkModel" to "wrong-default"))))
+            val dao = memoryDao(providers, linkedMapOf())
+            val repository = ProviderRepositoryImpl(dao, EmptySecrets, CatalogSeeder(dao) { """{"providers":[],"models":[]}""" })
+
+            val result = repository.checkConnectivity(id, "selected-model")
+
+            assertTrue(result is AnResult.Ok && result.value.ok)
+            assertEquals("selected-model", Json.parseToJsonElement(requireNotNull(body.get())).jsonObject.getValue("model").jsonPrimitive.content)
+        } finally {
+            server.stop(0)
+        }
+    }
+
+    @Test
+    fun `connectivity does not claim success for a truncated model answer`() = runBlocking {
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
+            createContext("/v1/chat/completions") { exchange ->
+                val response = """{"choices":[{"message":{"content":"Partial answer"},"finish_reason":"length"}]}""".toByteArray()
+                exchange.responseHeaders.set("Content-Type", "application/json")
+                exchange.sendResponseHeaders(200, response.size.toLong())
+                exchange.responseBody.use { it.write(response) }
+            }
+            start()
+        }
+        try {
+            val id = "custom-check"
+            val providers = linkedMapOf(id to ProviderRow(id, "Local", "custom", true,
+                Json.encodeToString(mapOf("baseURL" to "http://127.0.0.1:${server.address.port}/v1", "__sdkType" to "openai"))))
+            val dao = memoryDao(providers, linkedMapOf())
+            val repository = ProviderRepositoryImpl(dao, EmptySecrets, CatalogSeeder(dao) { """{"providers":[],"models":[]}""" })
+            val result = repository.checkConnectivity(id, "selected-model")
+            assertTrue(result is AnResult.Ok && !result.value.ok)
+        } finally {
+            server.stop(0)
+        }
+    }
+
+    @Test
+    fun `native discovery uses saved vaults and protocol pagination`() = runBlocking {
+        val anthropicKey = AtomicReference<String?>()
+        val googleKey = AtomicReference<String?>()
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
+            createContext("/anthropic/v1/models") { exchange ->
+                anthropicKey.set(exchange.requestHeaders.getFirst("x-api-key"))
+                val response = """{"data":[{"id":"claude-test"}],"has_more":false}""".toByteArray()
+                exchange.sendResponseHeaders(200, response.size.toLong())
+                exchange.responseBody.use { it.write(response) }
+            }
+            createContext("/google/v1beta/models") { exchange ->
+                googleKey.set(exchange.requestHeaders.getFirst("x-goog-api-key"))
+                val response = (if (exchange.requestURI.query == "pageToken=next") {
+                    """{"models":[{"name":"models/gemini-second","supportedGenerationMethods":["generateContent"]}]}"""
+                } else {
+                    """{"models":[{"name":"models/gemini-first","supportedGenerationMethods":["generateContent"]},{"name":"models/embedding","supportedGenerationMethods":["embedContent"]}],"nextPageToken":"next"}"""
+                }).toByteArray()
+                exchange.sendResponseHeaders(200, response.size.toLong())
+                exchange.responseBody.use { it.write(response) }
+            }
+            start()
+        }
+        try {
+            val root = "http://127.0.0.1:${server.address.port}"
+            val providers = linkedMapOf(
+                "anthropic" to ProviderRow("anthropic", "Anthropic", "builtin", false,
+                    Json.encodeToString(mapOf("baseURL" to "$root/anthropic", "__sdkType" to "anthropic"))),
+                "google" to ProviderRow("google", "Google", "builtin", false,
+                    Json.encodeToString(mapOf("baseURL" to "$root/google", "__sdkType" to "google"))),
+            )
+            val dao = memoryDao(providers, linkedMapOf())
+            val secrets = object : ProviderSecretStore {
+                override suspend fun read(providerId: String) = mapOf("apiKey" to "$providerId-secret")
+                override suspend fun write(providerId: String, secrets: Map<String, String>) = Unit
+            }
+            val repository = ProviderRepositoryImpl(dao, secrets, CatalogSeeder(dao) { """{"providers":[],"models":[]}""" })
+
+            assertEquals(listOf("claude-test"), (repository.fetchRemoteModels("anthropic", "", "") as AnResult.Ok).value)
+            assertEquals(listOf("gemini-first", "gemini-second"), (repository.fetchRemoteModels("google", "", "") as AnResult.Ok).value)
+            assertEquals("anthropic-secret", anthropicKey.get())
+            assertEquals("google-secret", googleKey.get())
+        } finally {
+            server.stop(0)
+        }
+    }
+
+    @Test
+    fun `provider-specific listings retain service paths ids and chat-only model types`() = runBlocking {
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        val listings = mapOf(
+            "/together/api/models" to """[{"id":"together-chat","type":"chat"},{"id":"image-only","type":"image"}]""",
+            "/nebius/v1/models" to """{"data":[{"id":"nebius-chat"}]}""",
+            "/mix/api/v1/models" to """{"data":[{"model_id":"mix-chat","types":"llm"},{"model_id":"reranker","types":"rerank"}]}""",
+            "/baichuan/v1/models" to """{"data":[{"model":"baichuan-chat"}]}""",
+            "/straico/v2/models" to """{"data":[{"id":"straico-chat","model_type":"chat"},{"id":"straico-image","model_type":"image"}]}""",
+            "/zen/v1/models" to """{"data":[{"id":"zen-chat"},{"id":"jev-systemone"}]}""",
+        )
+        listings.forEach { (path, json) ->
+            server.createContext(path) { exchange ->
+                if (path.startsWith("/nebius")) assertEquals("verbose=true", exchange.requestURI.query)
+                val response = json.toByteArray()
+                exchange.sendResponseHeaders(200, response.size.toLong())
+                exchange.responseBody.use { it.write(response) }
+            }
+        }
+        server.start()
+        try {
+            val root = "http://127.0.0.1:${server.address.port}"
+            val endpoints = mapOf(
+                "togetherai" to "$root/together/v1", "nebius" to "$root/nebius/v1",
+                "aihubmix" to "$root/mix", "baichuan" to "$root/baichuan/v1",
+                "straico" to "$root/straico/v2", "opencodezen" to "$root/zen/v1",
+            )
+            val expected = mapOf("togetherai" to "together-chat", "nebius" to "nebius-chat",
+                "aihubmix" to "mix-chat", "baichuan" to "baichuan-chat", "straico" to "straico-chat", "opencodezen" to "zen-chat")
+            val providers = endpoints.mapValues { (id, endpoint) ->
+                ProviderRow(id, id, "builtin", false, Json.encodeToString(mapOf("baseURL" to endpoint)))
+            }.toMutableMap()
+            val dao = memoryDao(providers, linkedMapOf())
+            val repository = ProviderRepositoryImpl(dao, EmptySecrets, CatalogSeeder(dao) { """{"providers":[],"models":[]}""" })
+
+            expected.forEach { (id, model) ->
+                assertEquals(listOf(model), (repository.fetchRemoteModels(id, "", "") as AnResult.Ok).value)
+            }
+        } finally {
+            server.stop(0)
+        }
+    }
+
     private fun memoryDao(
         providers: MutableMap<String, ProviderRow>,
         models: MutableMap<Pair<String, String>, ModelRow>,

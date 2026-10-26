@@ -87,17 +87,11 @@ fun ProviderConfigForm(
         return
     }
     if (oauthRequired) {
-        Column(
-            modifier = modifier
-                .fillMaxWidth()
-                .padding(spacing.l),
-        ) {
-            Text(
-                text = stringResource(R.string.provider_cfg_oauth_unsupported),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
+        ProviderOAuthForm(
+            providerId = detail.id,
+            displayName = displayName,
+            modifier = modifier,
+        )
         return
     }
 

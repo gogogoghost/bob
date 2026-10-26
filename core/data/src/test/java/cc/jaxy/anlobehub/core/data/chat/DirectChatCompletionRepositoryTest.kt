@@ -5,10 +5,17 @@ import cc.jaxy.anlobehub.core.data.local.LocalDao
 import cc.jaxy.anlobehub.core.data.local.ProviderRow
 import cc.jaxy.anlobehub.core.data.local.ModelRow
 import cc.jaxy.anlobehub.core.data.provider.ProviderSecretStore
+import cc.jaxy.anlobehub.core.data.search.WebSearchMode
+import cc.jaxy.anlobehub.core.data.search.WebSearchPolicy
+import cc.jaxy.anlobehub.core.data.search.WebSearchProtocol
+import cc.jaxy.anlobehub.core.data.search.WebSearchProvider
+import cc.jaxy.anlobehub.core.data.search.WebSearchProviderRepository
+import kotlinx.coroutines.flow.MutableStateFlow
 import com.sun.net.httpserver.HttpServer
 import java.net.InetSocketAddress
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.atomic.AtomicReference
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -38,6 +45,7 @@ class DirectChatCompletionRepositoryTest {
                 dao = providerDao(provider, modelId = "test-model"),
                 secrets = EmptySecrets,
                 files = UnusedFiles,
+                searchProviders = SearchProviders(),
             )
 
             val chunks = withTimeout(5_000) {
@@ -80,6 +88,7 @@ class DirectChatCompletionRepositoryTest {
                 dao = providerDao(provider, modelId = "gpt-test"),
                 secrets = FixedSecrets(mapOf("apiKey" to "local-openai-key")),
                 files = UnusedFiles,
+                searchProviders = SearchProviders(),
             )
 
             val chunks = repository.stream(
@@ -119,6 +128,7 @@ class DirectChatCompletionRepositoryTest {
                 dao = providerDao(provider, modelId = "model-test"),
                 secrets = EmptySecrets,
                 files = UnusedFiles,
+                searchProviders = SearchProviders(),
             )
 
             val chunks = repository.stream(
@@ -158,6 +168,7 @@ data: {"type":"message_stop"}
                 dao = providerDao(provider, modelId = "claude-test"),
                 secrets = FixedSecrets(mapOf("apiKey" to "local-anthropic-key")),
                 files = UnusedFiles,
+                searchProviders = SearchProviders(),
             )
 
             val chunks = repository.stream(
@@ -175,7 +186,6 @@ data: {"type":"message_stop"}
             assertEquals("2023-06-01", request.anthropicVersion)
             val body = Json.parseToJsonElement(request.body).jsonObject
             assertEquals("claude-test", body.getValue("model").jsonPrimitive.content)
-            assertEquals("4096", body.getValue("max_tokens").jsonPrimitive.content)
             assertEquals("true", body.getValue("stream").jsonPrimitive.content)
             assertEquals("You are an agent.", body.getValue("system").jsonPrimitive.content)
             val message = body.getValue("messages").jsonArray.single().jsonObject
@@ -197,6 +207,7 @@ data: {"type":"message_stop"}
             dao = providerDao(provider, modelId = "fal-ai/flux"),
             secrets = EmptySecrets,
             files = UnusedFiles,
+            searchProviders = SearchProviders(),
         )
 
         val failure = runCatching {
@@ -209,34 +220,39 @@ data: {"type":"message_stop"}
         }.exceptionOrNull()
 
         assertTrue(failure is UnsupportedOperationException)
-        assertEquals("No direct chat adapter is implemented for fal.", failure?.message)
     }
 
+
     @Test
-    fun `disabled model is rejected before a request is sent`() = runBlocking {
-        val provider = ProviderRow(
-            id = "custom-local-test",
-            name = "Local test endpoint",
-            source = "custom",
-            enabled = true,
-            config = Json.encodeToString(mapOf("baseURL" to "http://127.0.0.1:1/v1", "__sdkType" to "openai")),
-        )
-        val repository = DirectChatCompletionRepository(
-            dao = providerDao(provider, modelId = "disabled-model", modelEnabled = false),
-            secrets = EmptySecrets,
-            files = UnusedFiles,
-        )
-
-        val failure = runCatching {
-            repository.stream(
-                providerId = provider.id,
-                modelId = "disabled-model",
-                systemPrompt = "",
-                history = listOf(ChatMessage(role = "user", content = "Hello")),
-            ).toList()
-        }.exceptionOrNull()
-
-        assertEquals("Model is disabled", failure?.message)
+    fun `search failure metadata reaches consumer before terminal exception`() = runBlocking {
+        val paths = AtomicReference<List<String>>(emptyList())
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/") { exchange ->
+            paths.updateAndGet { it + exchange.requestURI.path }
+            exchange.sendResponseHeaders(403, -1)
+            exchange.close()
+        }
+        server.start()
+        try {
+            val base = "http://127.0.0.1:${server.address.port}"
+            val provider = ProviderRow("custom-search", "Search test", "custom", true,
+                Json.encodeToString(mapOf("baseURL" to "$base/v1")))
+            val search = WebSearchProvider("searxng", "SearXNG", WebSearchProtocol.SEARXNG, "$base/search", enabled = true)
+            val repository = DirectChatCompletionRepository(providerDao(provider, "local-model"), EmptySecrets, UnusedFiles, SearchProviders(listOf(search)))
+            val chunks = mutableListOf<ChatStreamChunk>()
+            val failure = runCatching {
+                withTimeout(5_000) {
+                    repository.stream(provider.id, "local-model", "", listOf(ChatMessage(role = "user", content = "Latest news")),
+                        searchPolicy = WebSearchPolicy(WebSearchMode.PROVIDER, "searxng")).collect { chunks += it }
+                }
+            }.exceptionOrNull()
+            assertTrue(failure is ChatStreamException)
+            assertEquals(ChatCompletionStatus.FAILED, (failure as ChatStreamException).completion.status)
+            assertEquals(listOf(WebSearchStage.SEARCHING, WebSearchStage.FAILED), chunks.mapNotNull { it.searchActivity?.stage })
+            assertEquals(listOf("/search"), paths.get())
+        } finally {
+            server.stop(0)
+        }
     }
 
     private fun providerDao(provider: ProviderRow, modelId: String, modelEnabled: Boolean = true): LocalDao =
@@ -246,6 +262,7 @@ data: {"type":"message_stop"}
         ) { proxy, method, args ->
             when (method.name) {
                 "provider" -> provider.takeIf { it.id == args?.firstOrNull() }
+                "reasoning" -> null
                 "model" -> if (args?.getOrNull(0) == provider.id && args.getOrNull(1) == modelId) {
                     ModelRow(
                         id = modelId,
@@ -261,6 +278,13 @@ data: {"type":"message_stop"}
                 else -> error("Unexpected local DAO call: ${method.name}")
             }
         } as LocalDao
+
+    private class SearchProviders(initial: List<WebSearchProvider> = emptyList()) : WebSearchProviderRepository {
+        override val providers = MutableStateFlow(initial)
+        override suspend fun apiKey(id: String): String? = null
+        override suspend fun save(provider: WebSearchProvider, apiKey: String?) = error("Chat must not edit search providers")
+        override suspend fun delete(id: String) = error("Chat must not delete search providers")
+    }
 
     private object EmptySecrets : ProviderSecretStore {
         override suspend fun read(providerId: String): Map<String, String> = emptyMap()

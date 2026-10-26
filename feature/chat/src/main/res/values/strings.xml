@@ -35,4 +35,29 @@
 
     <string name="chat_link_open">Open link</string>
     <string name="chat_scroll_to_bottom">Scroll to bottom</string>
+    <string name="chat_response_output_limit">The response reached its output limit and is incomplete. Generated content was retained; you can ask the model to continue.</string>
+    <string name="chat_response_interrupted">The response ended before completion. Generated content was retained.</string>
+    <string name="chat_response_stopped">Generation stopped.</string>
+    <string name="chat_response_filtered">The provider stopped the response because of its content safety policy.</string>
+    <string name="chat_response_tool_required">The model requested a tool, but this conversation has no configured tools. The response is incomplete.</string>
+    <string name="chat_response_failed">The provider did not complete the response successfully.</string>
+    <string name="chat_response_finish_reason">Provider finish reason: %1$s</string>
+    <string name="chat_web_search_loading">Loading web search preference…</string>
+    <string name="chat_web_search_preferences_error">Unable to read search settings. Pull to refresh before sending.</string>
+    <string name="chat_web_search_native_unavailable">This model does not support native search. Change the search mode in Agent settings.</string>
+    <string name="chat_web_search_provider_unavailable">The selected search provider is disabled, missing, or unconfigured. Check Web search settings.</string>
+    <string name="chat_web_search_route_status">Search: %1$s · %2$s</string>
+    <string name="chat_web_search_off">Off</string>
+    <string name="chat_web_search_native">Model native</string>
+    <string name="chat_web_search_source_global">Global default</string>
+    <string name="chat_web_search_source_agent">Agent</string>
+    <string name="chat_web_search_searching">Searching the web…</string>
+    <string name="chat_web_search_reading">Reading web sources…</string>
+    <string name="chat_web_search_completed">Web search completed</string>
+    <string name="chat_web_search_failed">Web search failed</string>
+    <string name="chat_web_search_incomplete">Web search stopped or was interrupted; completion was not reported.</string>
+    <string name="chat_web_search_query">Search query: %1$s</string>
+    <string name="chat_web_search_sources">Sources</string>
+    <string name="chat_action_retry">Retry</string>
+    <string name="chat_retry_nothing">Nothing to retry yet. Send a message first.</string>
 </resources>

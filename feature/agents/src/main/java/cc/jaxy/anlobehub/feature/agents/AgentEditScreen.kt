@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -17,6 +19,8 @@ import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FileCopy
+import androidx.compose.material.icons.filled.SmartToy
+import androidx.compose.material.icons.filled.TravelExplore
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -26,6 +30,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -40,17 +45,22 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cc.jaxy.anlobehub.core.data.chat.AIModel
+import cc.jaxy.anlobehub.core.data.chat.supportsWebSearch
+import cc.jaxy.anlobehub.core.data.search.WebSearchMode
+import cc.jaxy.anlobehub.core.data.search.WebSearchPolicy
 import cc.jaxy.anlobehub.core.designsystem.component.AnTextField
 import cc.jaxy.anlobehub.core.designsystem.component.AvatarImage
 import cc.jaxy.anlobehub.core.designsystem.component.AnTopBar
 import cc.jaxy.anlobehub.core.designsystem.component.ErrorBox
 import cc.jaxy.anlobehub.core.designsystem.component.InitialAvatar
+import cc.jaxy.anlobehub.core.designsystem.component.SearchProviderIcon
 import cc.jaxy.anlobehub.core.designsystem.component.SectionTitle
 import cc.jaxy.anlobehub.core.designsystem.component.SkeletonList
 import cc.jaxy.anlobehub.core.designsystem.text.resolve
@@ -60,7 +70,7 @@ import cc.jaxy.anlobehub.core.designsystem.R as DsR
 /**
  * Standalone create/edit page. `agentId == null` creates a new agent.
  * Edits local avatar/title/description/model/systemRole/openingMessage/
- * openingQuestions fields.
+ * openingQuestions/webSearch fields.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -70,6 +80,7 @@ fun AgentEditScreen(
     onOpenModelPicker: (current: AIModel?) -> Unit,
     onCreated: (String) -> Unit = {},
     onMutated: () -> Unit = {},
+    onOpenWebSearchSettings: () -> Unit = {},
     viewModel: AgentEditViewModel = hiltViewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -129,7 +140,7 @@ fun AgentEditScreen(
                     }
                     TextButton(
                         onClick = viewModel::save,
-                        enabled = !uiState.saving && !uiState.loading,
+                        enabled = !uiState.saving && !uiState.loading && !uiState.loadFailed,
                     ) {
                         if (uiState.saving) {
                             CircularProgressIndicator(
@@ -149,7 +160,7 @@ fun AgentEditScreen(
             uiState.loading -> SkeletonList(
                 modifier = Modifier.fillMaxSize().padding(padding),
             )
-            uiState.error != null && agentId != null && uiState.title.isBlank() ->
+            uiState.loadFailed && uiState.error != null ->
                 ErrorBox(
                     text = uiState.error!!.resolve(),
                     onRetry = viewModel::load,
@@ -163,6 +174,8 @@ fun AgentEditScreen(
                 onSystemRoleChange = viewModel::onSystemRoleChange,
                 onOpeningMessageChange = viewModel::onOpeningMessageChange,
                 onQuestionChange = viewModel::onQuestionChange,
+                onWebSearchChange = viewModel::onWebSearchChange,
+                onOpenWebSearchSettings = onOpenWebSearchSettings,
                 onAddQuestion = viewModel::addQuestion,
                 onRemoveQuestion = viewModel::removeQuestion,
                 onOpenModelPicker = {
@@ -223,6 +236,8 @@ private fun AgentEditBody(
     onDescriptionChange: (String) -> Unit,
     onSystemRoleChange: (String) -> Unit,
     onOpeningMessageChange: (String) -> Unit,
+    onWebSearchChange: (WebSearchPolicy?) -> Unit,
+    onOpenWebSearchSettings: () -> Unit,
     onQuestionChange: (Int, String) -> Unit,
     onAddQuestion: () -> Unit,
     onRemoveQuestion: (Int) -> Unit,
@@ -315,6 +330,10 @@ private fun AgentEditBody(
         }
         SectionTitle(text = stringResource(R.string.agents_edit_section_model))
         ListItem(
+            leadingContent = {
+                Icon(imageVector = Icons.Filled.SmartToy, contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            },
             headlineContent = { Text(stringResource(R.string.agents_create_model_label)) },
             supportingContent = {
                 Text(
@@ -340,6 +359,7 @@ private fun AgentEditBody(
             },
             modifier = Modifier.fillMaxWidth().clickable(onClick = onOpenModelPicker),
         )
+        AgentWebSearchSelector(state, onWebSearchChange, onOpenWebSearchSettings)
         SectionTitle(text = stringResource(R.string.agents_edit_section_prompt))
         Column(
             modifier = Modifier.padding(spacing.l),
@@ -386,5 +406,98 @@ private fun AgentEditBody(
                 Text(stringResource(R.string.agents_edit_add_question))
             }
         }
+    }
+}
+
+@Composable
+private fun AgentWebSearchSelector(
+    state: AgentEditViewModel.UiState,
+    onChange: (WebSearchPolicy?) -> Unit,
+    onManage: () -> Unit,
+) {
+    var open by remember { mutableStateOf(false) }
+    val nativeSupported = supportsWebSearch(state.provider, state.model)
+    val selected = state.searchProviders.find { it.id == state.webSearch?.providerId }
+    val unavailable = state.webSearch?.mode == WebSearchMode.PROVIDER && selected?.enabled != true
+    val label = when (state.webSearch?.mode) {
+        null -> stringResource(R.string.agents_web_search_follow_global)
+        WebSearchMode.OFF -> stringResource(R.string.agents_web_search_disable)
+        WebSearchMode.NATIVE -> stringResource(R.string.agents_web_search_native)
+        WebSearchMode.PROVIDER -> selected?.name ?: state.webSearch?.providerId.orEmpty()
+    }
+    val warning = when {
+        state.providersError -> stringResource(R.string.agents_web_search_load_error)
+        unavailable -> stringResource(R.string.agents_web_search_unavailable)
+        state.webSearch?.mode == WebSearchMode.NATIVE && !nativeSupported -> stringResource(R.string.agents_web_search_native_unavailable)
+        else -> null
+    }
+    val selectedBrand = cc.jaxy.anlobehub.core.designsystem.component.searchBrand(state.webSearch?.providerId, (selected?.builtin == true))
+    ListItem(
+        leadingContent = {
+            if (state.webSearch?.mode == WebSearchMode.PROVIDER && selectedBrand != null) {
+                SearchProviderIcon(providerId = selected?.id, name = selected?.name, builtin = (selected?.builtin == true), size = 40.dp)
+            } else {
+                Icon(imageVector = Icons.Filled.TravelExplore, contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        },
+        headlineContent = { Text(stringResource(R.string.agents_edit_section_web_search)) },
+        supportingContent = {
+            Column {
+                Text(label)
+                warning?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            }
+        },
+        trailingContent = { Icon(Icons.Filled.ChevronRight, contentDescription = null) },
+        modifier = Modifier.fillMaxWidth().clickable(enabled = !state.loading && !state.saving) { open = true },
+    )
+    if (open) {
+        AlertDialog(
+            onDismissRequest = { open = false },
+            title = { Text(stringResource(R.string.agents_edit_section_web_search)) },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState()).selectableGroup()) {
+                    val options = listOf(
+                        null to stringResource(R.string.agents_web_search_follow_global),
+                        WebSearchPolicy() to stringResource(R.string.agents_web_search_disable),
+                        WebSearchPolicy(WebSearchMode.NATIVE) to stringResource(R.string.agents_web_search_native),
+                    ) + state.searchProviders.filter { it.enabled }.map {
+                        WebSearchPolicy(WebSearchMode.PROVIDER, it.id) to it.name
+                    } + if (unavailable) listOf(state.webSearch to label) else emptyList()
+                    options.forEach { (policy, title) ->
+                        val optionProvider = state.searchProviders.firstOrNull { it.id == policy?.providerId }
+                            ?: state.webSearch?.takeIf { it.mode == WebSearchMode.PROVIDER && it.providerId == policy?.providerId }
+                                ?.let { cc.jaxy.anlobehub.core.data.search.WebSearchProvider(it.providerId!!, title, cc.jaxy.anlobehub.core.data.search.WebSearchProtocol.SEARXNG, "", enabled = false) }
+                        val enabled = when {
+                            policy?.mode == WebSearchMode.NATIVE -> nativeSupported
+                            policy?.mode == WebSearchMode.PROVIDER -> state.searchProviders.any { it.id == policy.providerId && it.enabled }
+                            else -> true
+                        }
+                        ListItem(
+                            colors = androidx.compose.material3.ListItemDefaults.colors(
+                                containerColor = androidx.compose.ui.graphics.Color.Transparent),
+                            headlineContent = { Text(title) },
+                            supportingContent = if (!enabled) ({ Text(stringResource(
+                                if (policy?.mode == WebSearchMode.NATIVE) R.string.agents_web_search_native_unavailable
+                                else R.string.agents_web_search_unavailable,
+                            )) }) else null,
+                            leadingContent = {
+                                if (policy?.mode == WebSearchMode.PROVIDER) {
+                                    SearchProviderIcon(providerId = optionProvider?.id, name = title, builtin = (optionProvider?.builtin == true), size = 32.dp)
+                                } else {
+                                    RadioButton(selected = state.webSearch == policy, onClick = null, enabled = enabled)
+                                }
+                            },
+                            modifier = Modifier.selectable(selected = state.webSearch == policy, enabled = enabled, role = Role.RadioButton) {
+                                onChange(policy)
+                                open = false
+                            },
+                        )
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { open = false; onManage() }) { Text(stringResource(R.string.agents_web_search_manage)) } },
+            dismissButton = { TextButton(onClick = { open = false }) { Text(stringResource(DsR.string.common_cancel)) } },
+        )
     }
 }

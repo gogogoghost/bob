@@ -8,7 +8,6 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
@@ -28,13 +27,13 @@ fun SearchField(
     modifier: Modifier = Modifier,
 ) {
     val spacing = MaterialTheme.spacing
-    OutlinedTextField(
+    AnTextField(
         value = query,
         onValueChange = onQueryChange,
+        label = hint,
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = spacing.l, vertical = spacing.s),
-        placeholder = { Text(hint) },
         leadingIcon = {
             Icon(imageVector = Icons.Filled.Search, contentDescription = null)
         },
@@ -49,6 +48,5 @@ fun SearchField(
             }
         },
         singleLine = true,
-        shape = MaterialTheme.shapes.extraLarge,
     )
 }

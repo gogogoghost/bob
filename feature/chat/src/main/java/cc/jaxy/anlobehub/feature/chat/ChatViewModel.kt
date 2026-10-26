@@ -9,11 +9,24 @@ import cc.jaxy.anlobehub.core.data.chat.AIModel
 import cc.jaxy.anlobehub.core.data.chat.ChatAttachment
 import cc.jaxy.anlobehub.core.data.chat.ChatCompletionRepository
 import cc.jaxy.anlobehub.core.data.chat.ChatMessage
+import cc.jaxy.anlobehub.core.data.chat.ChatCompletion
+import cc.jaxy.anlobehub.core.data.chat.ChatCompletionStatus
+import cc.jaxy.anlobehub.core.data.chat.ChatResponseBuffer
+import cc.jaxy.anlobehub.core.data.chat.ChatStreamException
 import cc.jaxy.anlobehub.core.data.chat.ChatTopic
 import cc.jaxy.anlobehub.core.data.chat.ModelRepository
 import cc.jaxy.anlobehub.core.data.chat.MessageRepository
 import cc.jaxy.anlobehub.core.data.chat.ReasoningConfig
 import cc.jaxy.anlobehub.core.data.chat.TopicRepository
+import cc.jaxy.anlobehub.core.data.chat.WebCitation
+import cc.jaxy.anlobehub.core.data.chat.WebSearchActivity
+import cc.jaxy.anlobehub.core.data.chat.supportsWebSearch
+import cc.jaxy.anlobehub.core.data.preferences.WebSearchPreferences
+import cc.jaxy.anlobehub.core.data.preferences.WebSearchSettings
+import cc.jaxy.anlobehub.core.data.search.WebSearchMode
+import cc.jaxy.anlobehub.core.data.search.WebSearchPolicy
+import cc.jaxy.anlobehub.core.data.search.WebSearchProvider
+import cc.jaxy.anlobehub.core.data.search.WebSearchProviderRepository
 import cc.jaxy.anlobehub.core.data.files.FileRepository
 import cc.jaxy.anlobehub.core.data.files.UploadedFile
 import cc.jaxy.anlobehub.core.designsystem.text.UiText
@@ -27,7 +40,11 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import java.io.IOException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.catch
 
 @HiltViewModel
 class ChatViewModel @Inject constructor(
@@ -38,6 +55,8 @@ class ChatViewModel @Inject constructor(
     private val agentRepository: AgentRepository,
     private val fileRepository: FileRepository,
     private val completionRepository: ChatCompletionRepository,
+    private val searchPreferences: WebSearchPreferences,
+    private val searchProviders: WebSearchProviderRepository,
 ) : ViewModel() {
     val agentId: String = savedStateHandle.get<String>("agentId") ?: ""
     val agentTitle: String? = savedStateHandle.get<String>("agentTitle")?.takeIf(String::isNotBlank)
@@ -66,6 +85,14 @@ class ChatViewModel @Inject constructor(
         val reasoningLoading: Boolean = false,
         val reasoningSaving: Boolean = false,
         val reasoningSavedTick: Int = 0,
+        val webSearchAvailable: Boolean = false,
+        val webSearchLoading: Boolean = true,
+        val webSearchReady: Boolean = false,
+        val webSearchPolicy: WebSearchPolicy = WebSearchPolicy(),
+        val webSearchOverride: WebSearchPolicy? = null,
+        val webSearchProviderName: String? = null,
+        val streamingSearchActivity: WebSearchActivity? = null,
+        val streamingCitations: List<WebCitation> = emptyList(),
     )
 
     private val _uiState = MutableStateFlow(UiState())
@@ -73,18 +100,101 @@ class ChatViewModel @Inject constructor(
     private var temperature: Double? = null
     private var systemPrompt = ""
     private var streamJob: Job? = null
+    private var activeResponse: ChatResponseBuffer? = null
+    private var generation = 0L
+    private var globalSearchSettings: WebSearchSettings? = null
+    private var globalSearchLoading = true
+    private var agentSearchLoaded = false
+    private var agentSearchLoading = true
+    private var searchPreferencesJob: Job? = null
+    private var searchProvidersJob: Job? = null
+    private var availableSearchProviders: List<WebSearchProvider>? = null
+    private var searchProvidersLoading = true
 
     init { load() }
 
+    private fun observeSearchPreferences() {
+        if (searchPreferencesJob?.isActive == true) return
+        globalSearchLoading = true
+        publishSearchPolicy()
+        searchPreferencesJob = viewModelScope.launch {
+            searchPreferences.webSearchSettings.catch { error ->
+                if (error is CancellationException) throw error
+                globalSearchSettings = null
+                globalSearchLoading = false
+                publishSearchPolicy()
+                _uiState.value = _uiState.value.copy(error = UiText.Res(R.string.chat_web_search_preferences_error))
+            }.collect { settings ->
+                globalSearchSettings = settings
+                globalSearchLoading = false
+                publishSearchPolicy()
+            }
+        }
+    }
+    private fun observeSearchProviders() {
+        if (searchProvidersJob?.isActive == true) return
+        searchProvidersLoading = true
+        publishSearchPolicy()
+        searchProvidersJob = viewModelScope.launch {
+            searchProviders.providers.catch { error ->
+                if (error is CancellationException) throw error
+                availableSearchProviders = null
+                searchProvidersLoading = false
+                publishSearchPolicy()
+                if (_uiState.value.webSearchPolicy.mode == WebSearchMode.PROVIDER) {
+                    _uiState.value = _uiState.value.copy(error = UiText.Res(R.string.chat_web_search_preferences_error))
+                }
+            }.collect { providers ->
+                availableSearchProviders = providers
+                searchProvidersLoading = false
+                publishSearchPolicy()
+            }
+        }
+    }
+
+
+    private fun publishSearchPolicy() {
+        val state = _uiState.value
+        val settings = globalSearchSettings
+        val policy = state.webSearchOverride ?: settings?.policy ?: WebSearchPolicy()
+        val external = policy.mode == WebSearchMode.PROVIDER
+        val selected = availableSearchProviders?.firstOrNull { it.id == policy.providerId }
+        val ready = settings != null && agentSearchLoaded && (!external || availableSearchProviders != null)
+        _uiState.value = state.copy(
+            webSearchPolicy = policy,
+            webSearchAvailable = ready && when (policy.mode) {
+                WebSearchMode.OFF -> true
+                WebSearchMode.NATIVE -> state.activeModel?.let { it.chatSupported && supportsWebSearch(it.providerId, it.id) } == true
+                WebSearchMode.PROVIDER -> selected?.enabled == true && selected.endpoint.isNotBlank()
+            },
+            webSearchReady = ready,
+            webSearchLoading = globalSearchLoading || agentSearchLoading || (external && searchProvidersLoading),
+            webSearchProviderName = selected?.name ?: policy.providerId,
+        )
+    }
+
     fun load() {
+        observeSearchPreferences()
+        observeSearchProviders()
+        agentSearchLoaded = effectiveAgentId() == null
+        agentSearchLoading = !agentSearchLoaded
+        publishSearchPolicy()
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(modelsLoading = true)
             val modelsDeferred = async { modelRepository.listModels() }
-            val configDeferred = async {
-                effectiveAgentId()?.let { id -> (agentRepository.getConfig(id) as? AnResult.Ok)?.value }
-            }
+            val configDeferred = async { effectiveAgentId()?.let { agentRepository.getConfig(it) } }
             val models = (modelsDeferred.await() as? AnResult.Ok)?.value.orEmpty()
-            val config = configDeferred.await()
+            val configResult = configDeferred.await()
+            if (configResult is AnResult.Err) {
+                agentSearchLoading = false
+                publishSearchPolicy()
+                _uiState.value = _uiState.value.copy(models = models, modelsLoading = false,
+                    error = configResult.error.toUiText())
+                return@launch
+            }
+            val config = (configResult as? AnResult.Ok)?.value
+            agentSearchLoaded = true
+            agentSearchLoading = false
             systemPrompt = config?.systemRole.orEmpty()
             val needTopics = initialTopicId != null || _uiState.value.activeTopicId != null
             val topics = if (needTopics) (topicRepository.listTopics(agentId = effectiveAgentId()) as? AnResult.Ok)?.value.orEmpty() else emptyList()
@@ -104,8 +214,10 @@ class ChatViewModel @Inject constructor(
                 ?: chatModels.firstOrNull()
             _uiState.value = _uiState.value.copy(topics = topics, activeTopicId = topicId, models = models,
                 activeModel = model, modelsLoading = false, agentAvatar = config?.avatar?.takeIf(String::isNotBlank),
+                webSearchOverride = config?.webSearch,
                 openingMessage = config?.openingMessage?.takeIf(String::isNotBlank),
                 openingQuestions = config?.openingQuestions.orEmpty().filter(String::isNotBlank))
+            publishSearchPolicy()
             loadMessages()
         }
     }
@@ -131,11 +243,36 @@ class ChatViewModel @Inject constructor(
         _uiState.value = _uiState.value.copy(activeTopicId = id, messages = emptyList(), messagesLoading = true, error = null)
         viewModelScope.launch { loadMessages() }
     }
-    fun selectModel(model: AIModel) { _uiState.value = _uiState.value.copy(activeModel = model) }
+    fun selectModel(model: AIModel) {
+        _uiState.value = _uiState.value.copy(activeModel = model)
+        publishSearchPolicy()
+    }
+
+
     fun send(text: String, fileIds: List<String> = emptyList()) {
-        if (text.isBlank() || _uiState.value.streaming) return
-        streamJob?.cancel()
-        streamJob = viewModelScope.launch { runSend(text, fileIds) }
+        val state = _uiState.value
+        if (text.isBlank() || state.streaming || streamJob?.isActive == true) return
+        if (state.webSearchLoading || !state.webSearchReady) {
+            _uiState.value = state.copy(error = UiText.Res(if (state.webSearchLoading)
+                R.string.chat_web_search_loading else R.string.chat_web_search_preferences_error))
+            return
+        }
+        val model = state.activeModel
+        if (model == null || model.providerId.isNullOrBlank() || model.id.isBlank()) {
+            _uiState.value = state.copy(error = UiText.Res(R.string.chat_model_required))
+            return
+        }
+        if (state.webSearchPolicy.mode != WebSearchMode.OFF && !state.webSearchAvailable) {
+            _uiState.value = state.copy(error = UiText.Res(if (state.webSearchPolicy.mode == WebSearchMode.NATIVE)
+                R.string.chat_web_search_native_unavailable else R.string.chat_web_search_provider_unavailable))
+            return
+        }
+        val turn = ++generation
+        // Reserve the turn before any suspend call, including topic creation and user-message persistence.
+        val searchPolicy = state.webSearchPolicy
+        _uiState.value = state.copy(streaming = true, streamingText = "", streamingReasoning = "", streamingReasoningSecs = null,
+            streamingSearchActivity = null, streamingCitations = emptyList(), error = null)
+        streamJob = viewModelScope.launch { runSend(text, fileIds, model, turn, searchPolicy) }
     }
 
     fun attach(bytes: ByteArray, name: String, mime: String) {
@@ -149,18 +286,36 @@ class ChatViewModel @Inject constructor(
     }
     fun removePendingFile(file: UploadedFile) { _uiState.value = _uiState.value.copy(pendingFiles = _uiState.value.pendingFiles - file) }
 
+    /** Re-runs the latest user prompt on the current topic; failed/interrupted turns stay in history. */
+    fun retry() {
+        val state = _uiState.value
+        if (state.streaming || streamJob?.isActive == true) return
+        val prompt = state.messages.lastOrNull { it.role == "user" }?.content?.trim().orEmpty()
+        if (prompt.isBlank()) {
+            _uiState.value = state.copy(error = UiText.Res(R.string.chat_retry_nothing))
+            return
+        }
+        send(prompt)
+    }
+
     fun stop() {
-        val s = _uiState.value
-        if (!s.streaming) return
-        streamJob?.cancel()
+        val state = _uiState.value
+        if (!state.streaming) return
+        val response = activeResponse
+        response?.finish(ChatCompletion(ChatCompletionStatus.STOPPED))
+        val assistant = response?.snapshot()
+        ++generation // An old request must not change a newly selected topic or a newer generation.
+        val job = streamJob
         streamJob = null
-        val text = s.streamingText.trim()
-        val reasoning = s.streamingReasoning.trim().takeIf(String::isNotBlank)
-        val assistant = text.takeIf(String::isNotBlank)?.let { ChatMessage(id = "assistant-${System.currentTimeMillis()}", role = "assistant", content = it, reasoning = reasoning, createdAt = System.currentTimeMillis()) }
-        _uiState.value = s.copy(messages = if (assistant == null) s.messages else s.messages + assistant, streaming = false,
-            streamingText = "", streamingReasoning = "", streamingReasoningSecs = null)
-        val topicId = s.activeTopicId
-        if (topicId != null && assistant != null) viewModelScope.launch { messageRepository.saveMessage(topicId, assistant) }
+        activeResponse = null
+        _uiState.value = state.copy(
+            messages = if (assistant != null && response?.topicId == state.activeTopicId)
+                state.messages + assistant else state.messages,
+            streaming = false, streamingText = "", streamingReasoning = "", streamingReasoningSecs = null,
+            streamingSearchActivity = null, streamingCitations = emptyList(),
+        )
+        job?.cancel()
+        // The owning coroutine persists its complete buffer in NonCancellable, even after navigation.
     }
     fun clearError() { _uiState.value = _uiState.value.copy(error = null) }
 
@@ -201,64 +356,84 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    private suspend fun runSend(text: String, fileIds: List<String>) {
-        val files = _uiState.value.pendingFiles.filter { it.id in fileIds }
+    private suspend fun runSend(text: String, fileIds: List<String>, model: AIModel, turn: Long, searchPolicy: WebSearchPolicy) {
+        val initial = _uiState.value
+        val files = initial.pendingFiles.filter { it.id in fileIds }
         val attachments = files.map { ChatAttachment(it.id, it.name, it.mime, it.url.orEmpty()) }
-        var topicId = _uiState.value.activeTopicId
-        if (topicId == null) {
-            when (val created = topicRepository.createTopic(text.trim().take(80), agentId = effectiveAgentId())) {
-                is AnResult.Ok -> { topicId = created.value; _uiState.value = _uiState.value.copy(activeTopicId = topicId) }
-                is AnResult.Err -> { _uiState.value = _uiState.value.copy(error = created.error.toUiText()); return }
-            }
-        }
-        val user = ChatMessage(id = "user-${System.currentTimeMillis()}", role = "user", content = text,
-            createdAt = System.currentTimeMillis(), attachments = attachments)
-        when (val saved = messageRepository.saveMessage(topicId!!, user)) {
-            is AnResult.Err -> { _uiState.value = _uiState.value.copy(error = saved.error.toUiText()); return }
-            is AnResult.Ok -> Unit
-        }
-        val snapshot = _uiState.value
-        val history = snapshot.messages + user
-        _uiState.value = snapshot.copy(messages = history, streaming = true, streamingText = "", streamingReasoning = "",
-            streamingReasoningSecs = null, error = null, pendingFiles = snapshot.pendingFiles - files)
-        val model = snapshot.activeModel
-        if (model?.providerId.isNullOrBlank() || model?.id.isNullOrBlank()) {
-            _uiState.value = _uiState.value.copy(streaming = false, error = UiText.Res(R.string.chat_model_required)); return
-        }
-        val textBuffer = StringBuilder(); val reasoningBuffer = StringBuilder()
-        var reasoningStarted = 0L; var reasoningSecs: Double? = null; var lastEmit = 0L
+        var topicId = initial.activeTopicId
+        var response: ChatResponseBuffer? = null
+        var failureDetail: String? = null
+        var uiError: UiText? = null
         try {
-            completionRepository.stream(model!!.providerId!!, model.id, systemPrompt, history, temperature).collect { chunk ->
-                if (chunk.reasoningDelta?.isNotEmpty() == true) { if (reasoningStarted == 0L) reasoningStarted = System.currentTimeMillis(); reasoningBuffer.append(chunk.reasoningDelta) }
-                if (chunk.textDelta.isNotEmpty()) {
-                    if (reasoningStarted != 0L && reasoningSecs == null) reasoningSecs = (System.currentTimeMillis() - reasoningStarted) / 1000.0
-                    textBuffer.append(chunk.textDelta)
+            if (topicId == null) {
+                when (val created = topicRepository.createTopic(text.trim().take(80), agentId = effectiveAgentId())) {
+                    is AnResult.Ok -> topicId = created.value
+                    is AnResult.Err -> { uiError = created.error.toUiText(); return }
                 }
+            }
+            if (turn != generation) return
+            _uiState.value = _uiState.value.copy(activeTopicId = topicId)
+            val user = ChatMessage(id = "user-${System.currentTimeMillis()}", role = "user", content = text,
+                createdAt = System.currentTimeMillis(), attachments = attachments)
+            when (val saved = messageRepository.saveMessage(topicId, user)) {
+                is AnResult.Err -> { uiError = saved.error.toUiText(); return }
+                is AnResult.Ok -> Unit
+            }
+            if (turn != generation) return
+            val history = initial.messages + user
+            _uiState.value = _uiState.value.copy(messages = history, pendingFiles = initial.pendingFiles - files)
+            val providerId = requireNotNull(model.providerId)
+            val buffer = ChatResponseBuffer(topicId, providerId, model.id)
+            response = buffer
+            activeResponse = buffer
+            var lastEmit = 0L
+            completionRepository.stream(providerId, model.id, systemPrompt, history, temperature,
+                sessionId = topicId, searchPolicy = searchPolicy).collect { chunk ->
+                buffer.append(chunk)
                 val now = System.currentTimeMillis()
-                if (now - lastEmit >= 80) {
-                    lastEmit = now; _uiState.value = _uiState.value.copy(streamingText = textBuffer.toString(), streamingReasoning = reasoningBuffer.toString(), streamingReasoningSecs = reasoningSecs)
+                if (turn == generation && (now - lastEmit >= 80 || chunk.searchActivity != null || chunk.citations.isNotEmpty())) {
+                    lastEmit = now
+                    _uiState.value = _uiState.value.copy(streamingText = buffer.text, streamingReasoning = buffer.reasoning,
+                        streamingReasoningSecs = buffer.reasoningDurationSeconds(),
+                        streamingSearchActivity = buffer.searchActivity, streamingCitations = buffer.citations)
                 }
             }
-            if (reasoningStarted != 0L && reasoningSecs == null) reasoningSecs = (System.currentTimeMillis() - reasoningStarted) / 1000.0
-            val assistant = ChatMessage(id = "assistant-${System.currentTimeMillis()}", role = "assistant", content = textBuffer.toString().trim(),
-                reasoning = reasoningBuffer.toString().trim().takeIf(String::isNotBlank), reasoningDuration = reasoningSecs, createdAt = System.currentTimeMillis())
-            if (assistant.content.isNotBlank()) {
-                messageRepository.saveMessage(topicId!!, assistant)
-                _uiState.value = _uiState.value.copy(messages = _uiState.value.messages + assistant, streaming = false, streamingText = "", streamingReasoning = "", streamingReasoningSecs = null)
-            } else _uiState.value = _uiState.value.copy(streaming = false, streamingText = "", streamingReasoning = "", streamingReasoningSecs = null)
-            loadTopics()
+            // The repository must explicitly confirm completion; a bare Flow EOF is not success.
+            if (buffer.completion == null) buffer.finish(ChatCompletion(ChatCompletionStatus.INTERRUPTED))
         } catch (e: CancellationException) {
+            // stop() already recorded STOPPED: never downgrade an explicit user stop to INTERRUPTED.
+            if (response?.completion == null) response?.finish(ChatCompletion(ChatCompletionStatus.INTERRUPTED))
             throw e
-        } catch (e: Throwable) {
-            val partial = textBuffer.toString().trim()
-            if (partial.isNotBlank()) {
-                val recoverable = ChatMessage(id = "assistant-${System.currentTimeMillis()}", role = "assistant", content = partial,
-                    reasoning = reasoningBuffer.toString().trim().takeIf(String::isNotBlank), createdAt = System.currentTimeMillis(), error = e.message)
-                messageRepository.saveMessage(topicId!!, recoverable)
-                _uiState.value = _uiState.value.copy(messages = _uiState.value.messages + recoverable)
+        } catch (e: Exception) {
+            val buffer = response
+            if (buffer == null) {
+                uiError = UiText.rawOrNull(e.message) ?: UiText.Res(R.string.chat_stream_interrupted)
+            } else {
+                val completion = (e as? ChatStreamException)?.completion ?: ChatCompletion(
+                    if (e is IOException && buffer.hasContent) ChatCompletionStatus.INTERRUPTED else ChatCompletionStatus.FAILED,
+                )
+                buffer.finish(completion)
+                if (buffer.completion?.status != ChatCompletionStatus.STOPPED && e !is ChatStreamException) failureDetail = e.message
+                if (completion.status == ChatCompletionStatus.FAILED) failureDetail = e.message
             }
-            _uiState.value = _uiState.value.copy(streaming = false, streamingText = "", streamingReasoning = "", streamingReasoningSecs = null,
-                error = UiText.rawOrNull(e.message) ?: UiText.Res(R.string.chat_stream_interrupted))
+        } finally {
+            val buffer = response
+            val assistant = buffer?.snapshot(failureDetail)
+            val saved = if (buffer != null && assistant != null) withContext(NonCancellable) {
+                messageRepository.saveMessage(buffer.topicId, assistant)
+            } else null
+            if (turn == generation) {
+                val state = _uiState.value
+                _uiState.value = state.copy(
+                    messages = if (assistant != null && state.activeTopicId == buffer?.topicId) state.messages + assistant else state.messages,
+                    streaming = false, streamingText = "", streamingReasoning = "", streamingReasoningSecs = null,
+                    streamingSearchActivity = null, streamingCitations = emptyList(),
+                    error = if (saved is AnResult.Err) saved.error.toUiText() else uiError,
+                )
+                activeResponse = null
+                streamJob = null
+                if (assistant != null) loadTopics()
+            }
         }
     }
 

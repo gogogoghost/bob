@@ -38,6 +38,12 @@ data class ChatMessage(
     val provider: String? = null,
     val error: String? = null,
     val attachments: List<ChatAttachment> = emptyList(),
+    /** Opaque Responses reasoning items; replay only to the same provider and model. */
+    val providerContext: List<JsonObject> = emptyList(),
+    /** Null for messages created before completion tracking was introduced. */
+    val completion: ChatCompletion? = null,
+    val searchActivity: WebSearchActivity? = null,
+    val citations: List<WebCitation> = emptyList(),
 )
 
 @Serializable

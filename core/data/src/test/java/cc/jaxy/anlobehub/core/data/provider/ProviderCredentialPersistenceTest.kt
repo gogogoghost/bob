@@ -91,6 +91,24 @@ class ProviderCredentialPersistenceTest {
         assertFalse(persisted.containsKey("apiKey"))
     }
 
+    @Test
+    fun `settings snapshots cannot expose or overwrite refreshed OAuth tokens`() = runBlocking {
+        val id = "chatgpt"
+        val rows = linkedMapOf(id to ProviderRow(id, "ChatGPT", "builtin", true, "{}"))
+        val secrets = MemorySecrets().apply {
+            values[id] = mapOf("oauthAccessToken" to "current-access", "oauthRefreshToken" to "current-refresh")
+        }
+        val repository = repository(rows, secrets)
+
+        val detail = (repository.getDetail(id) as AnResult.Ok).value
+        assertTrue(detail.keyVaults.keys.none { it.startsWith("oauth") })
+        assertTrue(repository.updateConfig(id, mapOf("oauthAccessToken" to "stale-access", "oauthRefreshToken" to "stale-refresh")) is AnResult.Ok)
+
+        assertEquals("current-access", secrets.values.getValue(id)["oauthAccessToken"])
+        assertEquals("current-refresh", secrets.values.getValue(id)["oauthRefreshToken"])
+        assertFalse(Json.decodeFromString<Map<String, String>>(rows.getValue(id).config).containsKey("oauthRefreshToken"))
+    }
+
     private fun repository(
         rows: MutableMap<String, ProviderRow>,
         secrets: MemorySecrets,

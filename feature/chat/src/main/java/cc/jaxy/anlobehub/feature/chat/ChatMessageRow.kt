@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import coil3.compose.AsyncImage
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Button
@@ -24,6 +23,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Psychology
@@ -39,7 +39,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.alpha
 import android.content.ClipData
 import androidx.compose.ui.platform.ClipEntry
@@ -49,7 +48,13 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import cc.jaxy.anlobehub.core.data.chat.ChatMessage
+import cc.jaxy.anlobehub.core.data.chat.ChatCompletionStatus
+import cc.jaxy.anlobehub.core.data.chat.WebCitation
+import cc.jaxy.anlobehub.core.data.chat.WebSearchActivity
+import cc.jaxy.anlobehub.core.data.chat.WebSearchStage
+import androidx.compose.material3.CircularProgressIndicator
 import cc.jaxy.anlobehub.core.designsystem.component.InitialAvatar
+import cc.jaxy.anlobehub.core.designsystem.component.SearchProviderIcon
 import cc.jaxy.anlobehub.core.designsystem.component.MarkdownText
 import cc.jaxy.anlobehub.core.designsystem.component.relativeTimeText
 import cc.jaxy.anlobehub.core.designsystem.theme.spacing
@@ -68,11 +73,25 @@ fun AssistantMessageRow(
     streamingReasoning: String? = null,
     streamingReasoningSecs: Double? = null,
     modifier: Modifier = Modifier,
+    streamingSearchActivity: WebSearchActivity? = null,
+    streamingCitations: List<WebCitation> = emptyList(),
+    onRetry: (() -> Unit)? = null,
 ) {
     val spacing = MaterialTheme.spacing
     val body = streamingText ?: message.content
     val reasoning = streamingReasoning ?: message.reasoning
     val reasoningSecs = streamingReasoningSecs ?: message.reasoningDuration
+    val completionStatus = message.completion?.status
+    val completionText = completionStatus?.messageResource()
+    val searchActivity = streamingSearchActivity ?: message.searchActivity
+    val nativeCitations = if (isStreaming) streamingCitations else message.citations
+    val searching = searchActivity?.stage == WebSearchStage.SEARCHING || searchActivity?.stage == WebSearchStage.READING
+    val presentation = remember(body, nativeCitations) { presentCitations(body, nativeCitations) }
+    val citations = remember(body, presentation.sources, searchActivity) {
+        if (searchActivity != null || nativeCitations.isNotEmpty()) presentation.sources else parseCitations(body)
+    }
+    val citationByUrl = remember(citations) { citations.associateBy { it.url } }
+    var linkPreview by remember(message.id) { mutableStateOf<ChatCitation?>(null) }
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -107,7 +126,8 @@ fun AssistantMessageRow(
                 )
             }
         }
-        if (!reasoning.isNullOrBlank() || (isStreaming && body.isBlank())) {
+        searchActivity?.let { SearchActivityRow(activity = it, isStreaming = isStreaming) }
+        if (!reasoning.isNullOrBlank() || (isStreaming && body.isBlank() && !searching)) {
             ThinkingCard(
                 content = reasoning.orEmpty(),
                 thinking = isStreaming && body.isBlank(),
@@ -115,45 +135,56 @@ fun AssistantMessageRow(
             )
         }
         if (body.isNotBlank()) {
-            var linkPreview by remember { mutableStateOf<ChatCitation?>(null) }
-            val citations = remember(body) { parseCitations(body) }
-            val citationByUrl = remember(citations) { citations.associateBy { it.url } }
             // Intercept all markdown link taps: show preview sheet first.
             androidx.compose.runtime.CompositionLocalProvider(
-                androidx.compose.ui.platform.LocalUriHandler provides remember {
+                androidx.compose.ui.platform.LocalUriHandler provides remember(citationByUrl, message.id) {
                     object : androidx.compose.ui.platform.UriHandler {
                         override fun openUri(uri: String) {
-                            val hit = citationByUrl[uri]
-                                ?: ChatCitation(index = "", title = uri, url = uri)
-                            linkPreview = hit
+                            if (isSafeWebUrl(uri)) {
+                                linkPreview = citationByUrl[uri]
+                                    ?: ChatCitation(index = "", title = uri, url = uri)
+                            }
                         }
                     }
                 },
             ) {
-                MarkdownText(markdown = body, streaming = isStreaming)
+                MarkdownText(markdown = presentation.markdown, streaming = isStreaming)
             }
             if (isStreaming) StreamingCursor()
-            if (citations.isNotEmpty() && !isStreaming) {
-                CitationRow(
-                    citations = citations,
-                    onOpen = { linkPreview = it },
-                )
-            }
-            linkPreview?.let { citation ->
-                LinkPreviewSheet(
-                    citation = citation,
-                    onDismiss = { linkPreview = null },
-                )
-            }
-        } else if (!isStreaming) {
+        } else if (!isStreaming && completionText == null && searchActivity == null && citations.isEmpty()) {
             Text(
                 text = stringResource(R.string.chat_empty_message),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-        } else if (reasoning.isNullOrBlank()) {
+        } else if (isStreaming && reasoning.isNullOrBlank() && searchActivity == null) {
             // Reasoning-only phase with nothing yet: show cursor alone.
             StreamingCursor()
+        }
+        if (citations.isNotEmpty()) {
+            Text(
+                text = stringResource(R.string.chat_web_search_sources),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            CitationRow(citations = citations, onOpen = { linkPreview = it })
+        }
+        linkPreview?.let { citation ->
+            LinkPreviewSheet(citation = citation, onDismiss = { linkPreview = null })
+        }
+        if (!isStreaming && completionText != null) {
+            Text(
+                text = stringResource(completionText),
+                style = MaterialTheme.typography.bodySmall,
+                color = if (completionStatus == ChatCompletionStatus.STOPPED) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
+            )
+            message.completion?.finishReason?.takeIf(String::isNotBlank)?.let { reason ->
+                Text(
+                    text = stringResource(R.string.chat_response_finish_reason, reason),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
         if (!message.error.isNullOrBlank()) {
             Text(
@@ -162,8 +193,60 @@ fun AssistantMessageRow(
                 color = MaterialTheme.colorScheme.error,
             )
         }
-        if (!isStreaming && body.isNotBlank()) {
-            MessageActions(text = body)
+        if (!isStreaming && (body.isNotBlank() || onRetry != null)) {
+            val retryable = completionStatus == ChatCompletionStatus.FAILED ||
+                completionStatus == ChatCompletionStatus.INTERRUPTED ||
+                completionStatus == ChatCompletionStatus.STOPPED ||
+                message.error?.isNotBlank() == true
+            MessageActions(text = body, showRetry = retryable && onRetry != null, onRetry = { onRetry?.invoke() })
+        }
+    }
+}
+
+@Composable
+private fun SearchActivityRow(activity: WebSearchActivity, isStreaming: Boolean) {
+    val active = isStreaming && (activity.stage == WebSearchStage.SEARCHING || activity.stage == WebSearchStage.READING)
+    val label = when (activity.stage) {
+        WebSearchStage.SEARCHING -> if (isStreaming) R.string.chat_web_search_searching else R.string.chat_web_search_incomplete
+        WebSearchStage.READING -> if (isStreaming) R.string.chat_web_search_reading else R.string.chat_web_search_incomplete
+        WebSearchStage.COMPLETED -> R.string.chat_web_search_completed
+        WebSearchStage.FAILED -> R.string.chat_web_search_failed
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.xs)) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.s),
+        ) {
+            if (active) CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+            Text(
+                text = stringResource(label),
+                style = MaterialTheme.typography.labelMedium,
+                color = if (activity.stage == WebSearchStage.FAILED) MaterialTheme.colorScheme.error
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        activity.providerId?.let { id ->
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.s),
+            ) {
+                SearchProviderIcon(providerId = id, name = activity.providerName, builtin = activity.providerBuiltin, size = 20.dp)
+                Text(
+                    text = activity.providerName?.takeIf(String::isNotBlank) ?: id,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        activity.queries.distinct().filter(String::isNotBlank).forEach { query ->
+            Text(
+                text = stringResource(R.string.chat_web_search_query, query),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        activity.error?.takeIf(String::isNotBlank)?.let { error ->
+            Text(text = error, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
         }
     }
 }
@@ -276,6 +359,8 @@ private fun StreamingCursor(modifier: Modifier = Modifier) {
 private fun MessageActions(
     text: String,
     modifier: Modifier = Modifier,
+    showRetry: Boolean = false,
+    onRetry: () -> Unit = {},
 ) {
     val clipboard = LocalClipboard.current
     val scope = androidx.compose.runtime.rememberCoroutineScope()
@@ -294,16 +379,20 @@ private fun MessageActions(
                 modifier = Modifier.size(16.dp),
             )
         }
+        if (showRetry) {
+            IconButton(onClick = onRetry, modifier = Modifier.size(32.dp)) {
+                Icon(
+                    imageVector = Icons.Filled.Refresh,
+                    contentDescription = stringResource(R.string.chat_action_retry),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+        }
     }
 }
 
 
-/** Parsed web citation from `[^n]: [title](url)` definitions. */
-data class ChatCitation(val index: String, val title: String, val url: String) {
-    val host: String get() = runCatching {
-        android.net.Uri.parse(url).host?.removePrefix("www.") ?: url
-    }.getOrDefault(url)
-}
 
 private val FOOTNOTE_DEF = Regex("""(?m)^\[\^(\d+)\]:\s*(.+)$""")
 private val MD_LINK = Regex("""\[([^\]]*)\]\((https?://[^)]+)\)""")
@@ -316,7 +405,7 @@ fun parseCitations(markdown: String): List<ChatCitation> {
         val link = MD_LINK.find(raw)
         val url = link?.groupValues?.getOrNull(2)
             ?: raw.split(Regex("""\s+""")).firstOrNull().orEmpty()
-        if (!url.startsWith("http")) return@mapNotNull null
+        if (!isSafeWebUrl(url)) return@mapNotNull null
         val title = link?.groupValues?.getOrNull(1)?.takeIf { it.isNotBlank() } ?: url
         ChatCitation(index = match.groupValues[1], title = title, url = url)
     }.toList()
@@ -338,7 +427,7 @@ fun CitationRow(
         horizontalArrangement = Arrangement.spacedBy(spacing.s),
         modifier = modifier.fillMaxWidth(),
     ) {
-        items(citations.size, key = { citations[it].index }) { i ->
+        items(citations.size, key = { citations[it].url }) { i ->
             val citation = citations[i]
             Surface(
                 shape = RoundedCornerShape(10.dp),
@@ -352,7 +441,7 @@ fun CitationRow(
                         .padding(horizontal = spacing.m, vertical = spacing.s),
                 ) {
                     Text(
-                        text = citation.title,
+                        text = citation.index.takeIf(String::isNotBlank)?.let { "$it. ${citation.title}" } ?: citation.title,
                         style = MaterialTheme.typography.bodySmall,
                         maxLines = 2,
                         minLines = 2,
@@ -388,22 +477,11 @@ private fun LinkPreviewSheet(
                 .padding(bottom = spacing.xl),
             verticalArrangement = Arrangement.spacedBy(spacing.s),
         ) {
-            // Favicon via Google S2 (best-effort; fails silent to letter).
-            var faviconOk by remember(citation.url) { mutableStateOf(true) }
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(spacing.m),
             ) {
-                if (faviconOk) {
-                    AsyncImage(
-                        model = "https://www.google.com/s2/favicons?domain=${citation.host}&sz=64",
-                        contentDescription = null,
-                        modifier = Modifier.size(40.dp).clip(RoundedCornerShape(8.dp)),
-                        onError = { faviconOk = false },
-                    )
-                } else {
-                    InitialAvatar(name = citation.host, size = 40.dp)
-                }
+                InitialAvatar(name = citation.host, size = 40.dp)
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = citation.title,
@@ -429,7 +507,7 @@ private fun LinkPreviewSheet(
             }
             Button(
                 onClick = {
-                    runCatching { uriHandler.openUri(citation.url) }
+                    if (isSafeWebUrl(citation.url)) runCatching { uriHandler.openUri(citation.url) }
                     onDismiss()
                 },
                 modifier = Modifier.fillMaxWidth(),
@@ -449,6 +527,8 @@ fun StreamingTurn(
     streamingReasoning: String,
     streamingReasoningSecs: Double?,
     modifier: Modifier = Modifier,
+    streamingSearchActivity: WebSearchActivity? = null,
+    streamingCitations: List<WebCitation> = emptyList(),
 ) {
     Column(modifier = modifier.fillMaxWidth()) {
         AssistantMessageRow(
@@ -459,6 +539,8 @@ fun StreamingTurn(
             streamingText = streamingText,
             streamingReasoning = streamingReasoning,
             streamingReasoningSecs = streamingReasoningSecs,
+            streamingSearchActivity = streamingSearchActivity,
+            streamingCitations = streamingCitations,
         )
     }
 }

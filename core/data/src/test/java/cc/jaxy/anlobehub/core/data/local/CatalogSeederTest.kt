@@ -54,7 +54,7 @@ class CatalogSeederTest {
         val openaiConfig = Json.decodeFromString<Map<String, String>>(openai.config)
         assertEquals("OpenAI", openai.name)
         assertFalse(openai.enabled)
-        assertFalse(providerRows.getValue("comfyui").enabled)
+        assertTrue(providerRows.getValue("comfyui").enabled)
         assertEquals("keep-me", openaiConfig["customHeader"])
         assertEquals("openai", openaiConfig["__sdkType"])
         assertEquals("fixture-revision", openaiConfig["__catalogRevision"])
@@ -125,8 +125,33 @@ class CatalogSeederTest {
         assertTrue(providerRows.getValue("openai").enabled)
         assertTrue(modelRows.getValue("openai" to "gpt-test").enabled)
     }
+
     @Test
-    fun `OpenAI Anthropic and router protocols activate compatible chat metadata`() = runBlocking {
+    fun `adapter migration preserves unversioned provider and model activation`() = runBlocking {
+        val providerRows = linkedMapOf(
+            "openai" to ProviderRow("openai", "OpenAI", "builtin", true,
+                Json.encodeToString(mapOf("baseURL" to "https://proxy.example/prefix/v1", "__checkModel" to "gpt-test"))),
+            "custom-local" to ProviderRow("custom-local", "My provider", "custom", true,
+                Json.encodeToString(mapOf("baseURL" to "http://localhost:1234/v1", "__sdkType" to "openai"))),
+        )
+        val modelRows = linkedMapOf(
+            ("openai" to "gpt-test") to ModelRow("gpt-test", "openai", "Local", true),
+            ("custom-local" to "my-chat") to ModelRow("my-chat", "custom-local", "My chat", true),
+        )
+        val dao = memoryDao(providerRows, modelRows)
+
+        CatalogSeeder(dao) { testCatalog }.ensureSeeded()
+
+        assertTrue(providerRows.getValue("openai").enabled)
+        assertTrue(providerRows.getValue("custom-local").enabled)
+        assertTrue(modelRows.getValue("openai" to "gpt-test").enabled)
+        assertTrue(modelRows.getValue("custom-local" to "my-chat").enabled)
+        val config = Json.decodeFromString<Map<String, String>>(providerRows.getValue("openai").config)
+        assertEquals("https://proxy.example/prefix/v1", config["baseURL"])
+        assertEquals("gpt-test", config["__checkModel"])
+    }
+    @Test
+    fun `chat protocols include cloud and OAuth implementations but exclude image models`() = runBlocking {
         val providerRows = linkedMapOf<String, ProviderRow>()
         val modelRows = linkedMapOf<Pair<String, String>, ModelRow>()
         val dao = memoryDao(providerRows, modelRows)
@@ -137,15 +162,15 @@ class CatalogSeederTest {
                 { "id": "openai-like", "name": "OpenAI Compatible", "protocol": "openai", "chatSupported": false, "adapterType": null },
                 { "id": "anthropic-like", "name": "Anthropic Compatible", "protocol": "anthropic", "chatSupported": false, "adapterType": null },
                 { "id": "router-like", "name": "Router", "protocol": "router", "chatSupported": false, "adapterType": null },
-                { "id": "oauth-provider", "name": "OAuth Provider", "protocol": "openai", "authType": "oauthDeviceFlow", "chatSupported": false, "adapterType": null },
-                { "id": "azure-provider", "name": "Azure", "protocol": "azure", "chatSupported": false, "adapterType": null }
+                { "id": "chatgpt", "name": "OAuth Provider", "protocol": "openai", "authType": "oauthDeviceFlow", "chatSupported": false, "adapterType": null },
+                { "id": "azure", "name": "Azure", "protocol": "azure", "chatSupported": false, "adapterType": null }
               ],
               "models": [
                 { "id": "oa-chat", "providerId": "openai-like", "type": "chat", "chatSupported": false },
                 { "id": "anthropic-chat", "providerId": "anthropic-like", "type": "chat", "chatSupported": false },
                 { "id": "router-chat", "providerId": "router-like", "type": "chat", "chatSupported": false },
-                { "id": "oauth-chat", "providerId": "oauth-provider", "type": "chat", "chatSupported": false },
-                { "id": "azure-chat", "providerId": "azure-provider", "type": "chat", "chatSupported": false },
+                { "id": "oauth-chat", "providerId": "chatgpt", "type": "chat", "chatSupported": false },
+                { "id": "azure-chat", "providerId": "azure", "type": "chat", "chatSupported": false },
                 { "id": "oa-image", "providerId": "openai-like", "type": "image", "chatSupported": true }
               ]
             }
@@ -158,22 +183,71 @@ class CatalogSeederTest {
         assertEquals("anthropic", config("anthropic-like")["__sdkType"])
         assertEquals("router", config("router-like")["__sdkType"])
         assertEquals("true", config("openai-like")["__catalogChatSupported"])
-        assertEquals("false", config("oauth-provider")["__catalogChatSupported"])
-        assertFalse(config("oauth-provider").containsKey("__sdkType"))
-        assertFalse(config("azure-provider").containsKey("__sdkType"))
+        assertEquals("true", config("chatgpt")["__catalogChatSupported"])
+        assertEquals("chatgpt", config("chatgpt")["__sdkType"])
+        assertEquals("azure", config("azure")["__sdkType"])
 
         val repository = ModelRepositoryImpl(dao, CatalogSeeder(dao) { catalog })
         val models = (repository.listModels() as AnResult.Ok).value.associateBy { it.id }
         assertTrue(models.getValue("oa-chat").chatSupported)
         assertTrue(models.getValue("anthropic-chat").chatSupported)
         assertTrue(models.getValue("router-chat").chatSupported)
-        assertFalse(models.getValue("oauth-chat").chatSupported)
-        assertFalse(models.getValue("azure-chat").chatSupported)
+        assertTrue(models.getValue("oauth-chat").chatSupported)
+        assertTrue(models.getValue("azure-chat").chatSupported)
         assertFalse(models.getValue("oa-image").chatSupported)
         assertTrue(repository.toggleModel("oa-chat", "openai-like", true) is AnResult.Ok)
         assertTrue(repository.toggleModel("anthropic-chat", "anthropic-like", true) is AnResult.Ok)
         assertTrue(repository.toggleModel("router-chat", "router-like", true) is AnResult.Ok)
-        assertTrue(repository.toggleModel("oauth-chat", "oauth-provider", true) is AnResult.Err)
+        assertTrue(repository.toggleModel("oauth-chat", "chatgpt", true) is AnResult.Ok)
+    }
+
+    @Test
+    fun `endpoint migration changes only exact official legacy endpoints`() = runBlocking {
+        val cases = listOf(
+            Triple("opencodecodingplan", "https://opencode.ai/zen/go/v1", "https://opencode.ai/inference/go/v1"),
+            Triple("opencodezen", "https://opencode.ai/zen/v1/", "https://opencode.ai/inference/v1"),
+            Triple("opencodecodingplan", "https://proxy.example/prefix/v1", "https://proxy.example/prefix/v1"),
+            Triple("opencodezen", "https://proxy.example/zen/v1", "https://proxy.example/zen/v1"),
+            Triple("straico", "https://api.straico.com/v0", "https://api.straico.com/v2"),
+            Triple("straico", "https://api.straico.com/v1/", "https://api.straico.com/v2"),
+            Triple("straico", "https://proxy.example/straico/v1", "https://proxy.example/straico/v1"),
+        )
+        for ((id, endpoint, expected) in cases) {
+            val providers = linkedMapOf(id to ProviderRow(id, id, "builtin", true,
+                Json.encodeToString(mapOf("baseURL" to endpoint))))
+            val dao = memoryDao(providers, linkedMapOf())
+            CatalogSeeder(dao) { """{"providers":[{"id":"$id","name":"$id","protocol":"openai"}],"models":[]}""" }.ensureSeeded()
+
+            assertEquals(expected, Json.decodeFromString<Map<String, String>>(providers.getValue(id).config)["baseURL"])
+            assertTrue(providers.getValue(id).enabled)
+        }
+    }
+
+    @Test
+    fun `Kimi current aliases supplement rather than replace saved model bindings`() = runBlocking {
+        val id = "kimicodingplan"
+        val providers = linkedMapOf(id to ProviderRow(id, "Kimi", "builtin", true,
+            Json.encodeToString(mapOf("__checkModel" to "kimi-k2.5"))))
+        val models = linkedMapOf((id to "kimi-k2.5") to ModelRow("kimi-k2.5", id, "Saved model", true))
+        val dao = memoryDao(providers, models)
+        val catalog = """{
+            "providers":[{"id":"kimicodingplan","name":"Kimi","protocol":"anthropic","checkModel":"kimi-k2.5","modelCount":2}],
+            "models":[{"id":"kimi-k2.5","providerId":"kimicodingplan","type":"chat"},{"id":"kimi-k2-thinking","providerId":"kimicodingplan","type":"chat"}]
+        }"""
+
+        CatalogSeeder(dao) { catalog }.ensureSeeded()
+
+        assertEquals(6, models.size)
+        assertTrue(models.getValue(id to "kimi-k2.5").enabled)
+        listOf("k3", "k3-256k", "kimi-for-coding", "kimi-for-coding-highspeed").forEach { model ->
+            val row = models.getValue(id to model)
+            assertFalse(row.enabled)
+            assertEquals("true", Json.parseToJsonElement(row.metadata).jsonObject.getValue("chatSupported").jsonPrimitive.content)
+        }
+        val config = Json.decodeFromString<Map<String, String>>(providers.getValue(id).config)
+        assertEquals("kimi-k2.5", config["__checkModel"])
+        assertEquals("kimi-for-coding", config["__catalogCheckModel"])
+        assertEquals("6", config["__catalogModelCount"])
     }
 
     @Test

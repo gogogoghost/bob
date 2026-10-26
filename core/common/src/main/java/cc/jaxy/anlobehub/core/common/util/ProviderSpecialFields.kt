@@ -109,6 +109,7 @@ private val SPECIAL_FIELDS: Map<String, SpecialFields> = mapOf(
     ),
     "bedrock" to SpecialFields(
         replacesApiKey = true,
+        authModeKey = VAULT_AUTH_TYPE,
         authModes = listOf(
             SpecialAuthMode(
                 id = "apiKey",
@@ -189,6 +190,7 @@ fun specialFieldsFor(providerId: String): SpecialFields? =
 
 /** Selects AWS credentials when access-key fields are configured. */
 fun inferBedrockAuthMode(vaults: Map<String, String?>): String {
+    vaults[VAULT_AUTH_TYPE]?.takeIf { it == "apiKey" || it == "awsCredentials" }?.let { return it }
     val hasAws = !vaults[VAULT_ACCESS_KEY_ID].isNullOrBlank() ||
         !vaults[VAULT_SECRET_ACCESS_KEY].isNullOrBlank()
     return if (hasAws) "awsCredentials" else "apiKey"

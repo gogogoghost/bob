@@ -34,4 +34,29 @@
 
     <string name="chat_link_open">打开链接</string>
     <string name="chat_scroll_to_bottom">回到底部</string>
+    <string name="chat_response_output_limit">本次回答达到输出上限，尚未完成。已保留生成内容，可以发送“请继续”接着生成。</string>
+    <string name="chat_response_interrupted">回答在完成前中断，已保留生成内容。</string>
+    <string name="chat_response_stopped">已停止生成。</string>
+    <string name="chat_response_filtered">供应商的内容安全策略终止了本次回答。</string>
+    <string name="chat_response_tool_required">模型请求调用工具，但当前会话没有配置工具，回答尚未完成。</string>
+    <string name="chat_response_failed">供应商未正常完成本次回答。</string>
+    <string name="chat_response_finish_reason">供应商结束原因：%1$s</string>
+    <string name="chat_web_search_loading">正在读取联网搜索偏好…</string>
+    <string name="chat_web_search_preferences_error">无法读取搜索设置，请下拉刷新后再发送。</string>
+    <string name="chat_web_search_native_unavailable">此模型不支持内置搜索，请在 Agent 设置中更换搜索方式。</string>
+    <string name="chat_web_search_provider_unavailable">所选搜索服务商已停用、删除或未配置，请检查联网搜索设置。</string>
+    <string name="chat_web_search_route_status">搜索：%1$s · %2$s</string>
+    <string name="chat_web_search_off">关闭</string>
+    <string name="chat_web_search_native">模型内置</string>
+    <string name="chat_web_search_source_global">全局默认</string>
+    <string name="chat_web_search_source_agent">Agent 单独设置</string>
+    <string name="chat_web_search_searching">正在联网搜索…</string>
+    <string name="chat_web_search_reading">正在阅读网页来源…</string>
+    <string name="chat_web_search_completed">联网搜索已完成</string>
+    <string name="chat_web_search_failed">联网搜索失败</string>
+    <string name="chat_web_search_incomplete">联网搜索已停止或中断，服务商未报告完成。</string>
+    <string name="chat_web_search_query">搜索词：%1$s</string>
+    <string name="chat_web_search_sources">来源</string>
+    <string name="chat_action_retry">重试</string>
+    <string name="chat_retry_nothing">还没有可重试的内容，先发送一条消息。</string>
 </resources>

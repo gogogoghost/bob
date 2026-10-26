@@ -4,7 +4,8 @@ import android.content.Context
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.sqlite.db.SupportSQLiteDatabase
-import cc.jaxy.anlobehub.core.common.util.providerConfigSpec
+import cc.jaxy.anlobehub.core.common.util.providerAdapterType
+import cc.jaxy.anlobehub.core.common.util.providerDefaultEndpoint
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -109,8 +110,8 @@ class CatalogSeeder(
             if (seeded) return@withLock
 
             val catalog = bundledCatalog
+            val supplementalModels = supplementalKimiModels(catalog)
             val revision = catalog.source.string("commit") ?: "unknown"
-            val catalogProviderIds = catalog.providers.mapTo(mutableSetOf()) { it.id }
             val existingProviders = dao.providers()
             val oldProviders = existingProviders.associateBy { it.id }
             val oldProviderConfigs = existingProviders.associate { row ->
@@ -119,12 +120,6 @@ class CatalogSeeder(
             }
             val existingModels = dao.models()
             val originalModels = existingModels.associateBy { it.providerId to it.id }
-            val resetActivationDefaults = existingProviders.any { row ->
-                (row.id in catalogProviderIds || row.source == "custom") &&
-                    oldProviderConfigs[row.id]?.get(ACTIVATION_DEFAULTS_VERSION_KEY) != ACTIVATION_DEFAULTS_VERSION
-            } || existingModels.any { row ->
-                modelActivationVersion(row.metadata) != ACTIVATION_DEFAULTS_VERSION
-            }
 
             val providers = catalog.providers.mapNotNull { provider ->
                 if (provider.id == "lobehub") return@mapNotNull null
@@ -133,13 +128,23 @@ class CatalogSeeder(
                 if (old?.source == "custom") {
                     config[ACTIVATION_DEFAULTS_VERSION_KEY] = ACTIVATION_DEFAULTS_VERSION
                     return@mapNotNull old.copy(
-                        enabled = if (resetActivationDefaults) false else old.enabled,
+                        enabled = old.enabled,
                         config = json.encodeToString(config),
                     )
                 }
 
                 if (config["baseURL"].isNullOrBlank()) {
-                    defaultEndpoint(provider)?.let { config["baseURL"] = it }
+                    providerDefaultEndpoint(provider.id)?.let { config["baseURL"] = it }
+                }
+                val oldEndpoint = config["baseURL"]?.trimEnd('/')
+                val migrateEndpoint = when (provider.id) {
+                    "opencodecodingplan" -> oldEndpoint == "https://opencode.ai/zen/go/v1"
+                    "opencodezen" -> oldEndpoint == "https://opencode.ai/zen/v1"
+                    "straico" -> oldEndpoint == "https://api.straico.com/v0" || oldEndpoint == "https://api.straico.com/v1"
+                    else -> false
+                }
+                if (migrateEndpoint) {
+                    providerDefaultEndpoint(provider.id)?.let { config["baseURL"] = it }
                 }
                 config["__catalogRevision"] = revision
                 config["__catalogDescription"] = provider.description.orEmpty()
@@ -153,8 +158,8 @@ class CatalogSeeder(
                 config["__catalogShowChecker"] = provider.showChecker.toString()
                 config["__catalogShowModelFetcher"] = provider.showModelFetcher.toString()
                 config["__catalogChatSupported"] = (localAdapterType(provider) != null).toString()
-                config["__catalogModelCount"] = provider.modelCount.toString()
-                config["__catalogCheckModel"] = provider.checkModel.orEmpty()
+                config["__catalogModelCount"] = (provider.modelCount + if (provider.id == "kimicodingplan") supplementalModels.size else 0).toString()
+                config["__catalogCheckModel"] = if (provider.id == "kimicodingplan") "kimi-for-coding" else provider.checkModel.orEmpty()
                 config[ACTIVATION_DEFAULTS_VERSION_KEY] = ACTIVATION_DEFAULTS_VERSION
                 localAdapterType(provider)?.let { config["__sdkType"] = it } ?: config.remove("__sdkType")
 
@@ -162,7 +167,7 @@ class CatalogSeeder(
                     id = provider.id,
                     name = provider.name,
                     source = "builtin",
-                    enabled = if (resetActivationDefaults) false else old?.enabled ?: false,
+                    enabled = old?.enabled ?: false,
                     config = json.encodeToString(config),
                 )
             }
@@ -175,7 +180,7 @@ class CatalogSeeder(
                 val config = oldProviderConfigs[old.id].orEmpty().toMutableMap()
                 config[ACTIVATION_DEFAULTS_VERSION_KEY] = ACTIVATION_DEFAULTS_VERSION
                 val updated = old.copy(
-                    enabled = if (resetActivationDefaults) false else old.enabled,
+                    enabled = old.enabled,
                     config = json.encodeToString(config),
                 )
                 if (updated != old) dao.putProvider(updated)
@@ -193,13 +198,13 @@ class CatalogSeeder(
                     )
                 }
                 row.copy(
-                    enabled = if (resetActivationDefaults) false else row.enabled,
+                    enabled = row.enabled,
                     metadata = updatedMetadata,
                 )
             }
             val oldModels = normalizedModels.associateBy { it.providerId to it.id }
             val providerSupport = catalog.providers.associate { it.id to (localAdapterType(it) != null) }
-            val models = catalog.models.mapNotNull { model ->
+            val models = (catalog.models + supplementalModels).mapNotNull { model ->
                 val id = model.string("id") ?: return@mapNotNull null
                 val providerId = model.string("providerId") ?: return@mapNotNull null
                 if (providerId == "lobehub") return@mapNotNull null
@@ -227,41 +232,25 @@ class CatalogSeeder(
         }
     }
 
-    private fun localAdapterType(provider: BundledProvider): String? {
-        if (provider.authType.equals("oauthDeviceFlow", ignoreCase = true)) return null
-        return when (provider.protocol?.lowercase()) {
-            "openai" -> "openai"
-            "router" -> "router"
-            "anthropic" -> "anthropic"
-            else -> provider.adapterType?.takeIf { it in DIRECT_ADAPTER_TYPES }
-        }
-    }
+    private fun localAdapterType(provider: BundledProvider): String? =
+        providerAdapterType(provider.id, provider.protocol, provider.adapterType)
 
-    private fun modelActivationVersion(metadata: String): String? = runCatching {
-        json.decodeFromString<JsonObject>(metadata).string(ACTIVATION_DEFAULTS_VERSION_KEY)
-    }.getOrNull()
-
-
-    private fun defaultEndpoint(provider: BundledProvider): String? {
-        provider.proxyPlaceholder?.takeIf(String::isNotBlank)?.let { return it }
-        providerConfigSpec(provider.id, "builtin").endpoint?.placeholder
-            ?.takeUnless { it == GENERIC_ENDPOINT_PLACEHOLDER }
-            ?.let { return it }
-        return when (provider.id) {
-            "openai" -> "https://api.openai.com/v1"
-            "ollama" -> "http://localhost:11434"
-            "ollamacloud" -> "https://ollama.com"
-            "google" -> "https://generativelanguage.googleapis.com"
-            "bedrock" -> "https://bedrock-runtime.us-east-1.amazonaws.com"
-            "vertexai" -> "https://aiplatform.googleapis.com"
-            else -> null
-        }
+    private fun supplementalKimiModels(catalog: BundledCatalog): List<JsonObject> {
+        if (catalog.providers.none { it.id == "kimicodingplan" }) return emptyList()
+        val existing = catalog.models.asSequence().filter { it.string("providerId") == "kimicodingplan" }
+            .mapNotNull { it.string("id") }.toHashSet()
+        // Current accepted IDs: https://www.kimi.com/code/docs/en/ (legacy bindings stay intact).
+        return listOf("k3", "k3-256k", "kimi-for-coding", "kimi-for-coding-highspeed")
+            .filterNot { it in existing }.map { id ->
+                JsonObject(mapOf(
+                    "id" to JsonPrimitive(id), "providerId" to JsonPrimitive("kimicodingplan"),
+                    "displayName" to JsonPrimitive(id), "type" to JsonPrimitive("chat"),
+                ))
+            }
     }
 
     private companion object {
-        const val GENERIC_ENDPOINT_PLACEHOLDER = "https://your-proxy-url.com/v1"
         val seedMutex = Mutex()
-        val DIRECT_ADAPTER_TYPES = setOf("openai", "router", "anthropic", "google", "ollama")
     }
 }
 

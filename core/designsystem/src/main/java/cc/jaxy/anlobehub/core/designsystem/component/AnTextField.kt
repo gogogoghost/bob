@@ -10,14 +10,18 @@ import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -28,7 +32,8 @@ import androidx.compose.ui.unit.dp
 import cc.jaxy.anlobehub.core.designsystem.R
 import cc.jaxy.anlobehub.core.designsystem.theme.AnlobehubTheme
 
-// 通用输入框：OutlinedTextField 薄封装，统一样式（单行默认，label/supporting/error 由调用方传入）
+// 通用输入框：filled 风格 —— 无左右边框，以 surfaceContainerHigh 背景分区，
+// 形状取 MaterialTheme.shapes.large。error 态保留红色指示线 + supporting。
 @Composable
 fun AnTextField(
     value: String,
@@ -37,28 +42,41 @@ fun AnTextField(
     modifier: Modifier = Modifier,
     keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
     visualTransformation: VisualTransformation = VisualTransformation.None,
+    leadingIcon: @Composable (() -> Unit)? = null,
     trailingIcon: @Composable (() -> Unit)? = null,
     supportingText: @Composable (() -> Unit)? = null,
     placeholder: @Composable (() -> Unit)? = null,
     isError: Boolean = false,
     singleLine: Boolean = true,
+    maxLines: Int = if (singleLine) 1 else Int.MAX_VALUE,
     keyboardActions: KeyboardActions = KeyboardActions.Default,
     readOnly: Boolean = false,
+    enabled: Boolean = true,
 ) {
-    OutlinedTextField(
+    TextField(
         value = value,
         onValueChange = onValueChange,
-        modifier = modifier,
+        modifier = modifier.clip(MaterialTheme.shapes.large),
         label = { Text(label) },
         placeholder = placeholder,
         keyboardOptions = keyboardOptions,
         keyboardActions = keyboardActions,
         visualTransformation = visualTransformation,
+        leadingIcon = leadingIcon,
         trailingIcon = trailingIcon,
         supportingText = supportingText,
         isError = isError,
         singleLine = singleLine,
+        maxLines = maxLines,
         readOnly = readOnly,
+        enabled = enabled,
+        shape = MaterialTheme.shapes.large,
+        colors = TextFieldDefaults.colors(
+            focusedIndicatorColor = Color.Transparent,
+            unfocusedIndicatorColor = Color.Transparent,
+            disabledIndicatorColor = Color.Transparent,
+            errorIndicatorColor = Color.Transparent,
+        ),
     )
 }
 
@@ -72,6 +90,7 @@ fun PasswordField(
     keyboardActions: KeyboardActions = KeyboardActions.Default,
     isError: Boolean = false,
     supportingText: @Composable (() -> Unit)? = null,
+    enabled: Boolean = true,
 ) {
     var visible by rememberSaveable { mutableStateOf(false) }
     AnTextField(
@@ -93,6 +112,7 @@ fun PasswordField(
         isError = isError,
         singleLine = true,
         keyboardActions = keyboardActions,
+        enabled = enabled,
     )
 }
 

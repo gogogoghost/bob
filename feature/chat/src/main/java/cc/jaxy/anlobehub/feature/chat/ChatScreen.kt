@@ -41,11 +41,9 @@ import androidx.compose.material.icons.filled.Forum
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.SmartToy
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
@@ -85,7 +83,13 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cc.jaxy.anlobehub.core.data.chat.AIModel
 import cc.jaxy.anlobehub.core.data.chat.ChatMessage
 import cc.jaxy.anlobehub.core.data.chat.ChatTopic
+import cc.jaxy.anlobehub.core.data.chat.WebCitation
+import cc.jaxy.anlobehub.core.data.chat.WebSearchActivity
+import cc.jaxy.anlobehub.core.data.chat.WebSearchStage
 import cc.jaxy.anlobehub.core.data.files.UploadedFile
+import cc.jaxy.anlobehub.core.data.search.WebSearchMode
+import cc.jaxy.anlobehub.core.data.search.WebSearchPolicy
+import cc.jaxy.anlobehub.core.designsystem.component.AnTextField
 import cc.jaxy.anlobehub.core.designsystem.component.AnTopBar
 import cc.jaxy.anlobehub.core.designsystem.component.EmptyBox
 import cc.jaxy.anlobehub.core.designsystem.component.InitialAvatar
@@ -181,6 +185,8 @@ private fun ChatScreenWired(
         uiState.streamingText,
         uiState.streamingReasoning,
         uiState.streaming,
+        uiState.streamingSearchActivity,
+        uiState.streamingCitations,
     ) {
         if (totalItems <= 0 || !tail.pinned) return@LaunchedEffect
         if (listState.isScrollInProgress) return@LaunchedEffect // gesture in flight
@@ -224,6 +230,14 @@ private fun ChatScreenWired(
         streamingText = uiState.streamingText,
         streamingReasoning = uiState.streamingReasoning,
         streamingReasoningSecs = uiState.streamingReasoningSecs,
+        streamingSearchActivity = uiState.streamingSearchActivity,
+        streamingCitations = uiState.streamingCitations,
+        webSearchPolicy = uiState.webSearchPolicy,
+        webSearchAvailable = uiState.webSearchAvailable,
+        webSearchLoading = uiState.webSearchLoading,
+        webSearchReady = uiState.webSearchReady,
+        webSearchInherited = uiState.webSearchOverride == null,
+        webSearchProviderName = uiState.webSearchProviderName,
         topics = uiState.topics,
         topicsLoading = uiState.topicsLoading,
         activeTopicId = uiState.activeTopicId,
@@ -259,6 +273,7 @@ private fun ChatScreenWired(
             }
         },
         onStop = viewModel::stop,
+        onRetry = viewModel::retry,
         onAttachClick = { pickImage.launch("image/*") },
         onRemoveFile = viewModel::removePendingFile,
         onRefresh = viewModel::load,
@@ -277,6 +292,14 @@ private fun ChatContent(
     streamingText: String,
     streamingReasoning: String = "",
     streamingReasoningSecs: Double? = null,
+    streamingSearchActivity: WebSearchActivity? = null,
+    streamingCitations: List<WebCitation> = emptyList(),
+    webSearchPolicy: WebSearchPolicy = WebSearchPolicy(),
+    webSearchAvailable: Boolean = false,
+    webSearchLoading: Boolean = false,
+    webSearchReady: Boolean = true,
+    webSearchInherited: Boolean = true,
+    webSearchProviderName: String? = null,
     topics: List<ChatTopic>,
     topicsLoading: Boolean = false,
     activeTopicId: String?,
@@ -304,6 +327,7 @@ private fun ChatContent(
     onSend: (String, List<String>) -> Unit = { _, _ -> },
     onInputFocused: () -> Unit = {},
     onStop: () -> Unit = {},
+    onRetry: () -> Unit = {},
     onAttachClick: () -> Unit = {},
     onRemoveFile: (UploadedFile) -> Unit = {},
     onRefresh: () -> Unit = {},
@@ -316,11 +340,14 @@ private fun ChatContent(
     var showModelDetail by remember { mutableStateOf(false) }
     val barTitle = title?.takeIf { it.isNotBlank() }
         ?: stringResource(R.string.chat_default_title)
-    val sendEnabled = input.isNotBlank() && !streaming
+    val searchAllowsSend = !webSearchLoading && webSearchReady && (webSearchPolicy.mode == WebSearchMode.OFF || webSearchAvailable)
+    val sendEnabled = input.isNotBlank() && !streaming && searchAllowsSend
 
     fun doSend() {
         val text = input.trim()
-        if (text.isBlank() || streaming) return
+        // OFF needs no search route: never trap a plain message behind prefs loading.
+        val gate = if (webSearchPolicy.mode == WebSearchMode.OFF) !streaming else !streaming && searchAllowsSend
+        if (text.isBlank() || !gate) return
         onSend(text, pendingFiles.mapNotNull { it.id.takeIf { id -> id.isNotBlank() } })
         input = ""
         hapticTick(view)
@@ -363,7 +390,7 @@ private fun ChatContent(
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.Start,
+                        horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.s),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         if (modelsLoading && activeModel == null) {
@@ -382,7 +409,7 @@ private fun ChatContent(
                                     1.dp,
                                     MaterialTheme.colorScheme.outlineVariant,
                                 ),
-                                modifier = Modifier.combinedClickable(
+                                modifier = Modifier.weight(1f, fill = false).combinedClickable(
                                     onClick = onOpenModelPicker,
                                     onLongClick = { showModelDetail = true },
                                 ),
@@ -412,7 +439,29 @@ private fun ChatContent(
                             }
                         }
                     }
-                                        if (pendingFiles.isNotEmpty() || uploading) {
+                    Text(
+                        text = when {
+                            webSearchLoading -> stringResource(R.string.chat_web_search_loading)
+                            !webSearchReady -> stringResource(R.string.chat_web_search_preferences_error)
+                            !webSearchAvailable && webSearchPolicy.mode == WebSearchMode.NATIVE ->
+                                stringResource(R.string.chat_web_search_native_unavailable)
+                            !webSearchAvailable && webSearchPolicy.mode == WebSearchMode.PROVIDER ->
+                                stringResource(R.string.chat_web_search_provider_unavailable)
+                            else -> stringResource(R.string.chat_web_search_route_status,
+                                when (webSearchPolicy.mode) {
+                                    WebSearchMode.OFF -> stringResource(R.string.chat_web_search_off)
+                                    WebSearchMode.NATIVE -> stringResource(R.string.chat_web_search_native)
+                                    WebSearchMode.PROVIDER -> webSearchProviderName ?: webSearchPolicy.providerId.orEmpty()
+                                },
+                                stringResource(if (webSearchInherited) R.string.chat_web_search_source_global else R.string.chat_web_search_source_agent),
+                            )
+                        },
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (pendingFiles.isNotEmpty() || uploading) {
                         LazyRow(horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.s)) {
                             items(
                                 count = pendingFiles.size,
@@ -455,14 +504,13 @@ private fun ChatContent(
                                 )
                             }
                         }
-                        OutlinedTextField(
+                        AnTextField(
                             value = input,
                             onValueChange = { input = it },
+                            label = stringResource(R.string.chat_input_hint),
                             modifier = Modifier
                                 .weight(1f)
-                                .onFocusChanged { if (it.isFocused) onInputFocused() },
-                            placeholder = { Text(stringResource(R.string.chat_input_hint)) },
-                            shape = RoundedCornerShape(24.dp),
+                                .onFocusChanged { state -> if (state.isFocused) onInputFocused() },
                             maxLines = 6,
                             enabled = !streaming,
                             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
@@ -527,7 +575,7 @@ private fun ChatContent(
                             )
                             openingQuestions.forEach { question ->
                                 AssistChip(
-                                    onClick = { input = question },
+                                    onClick = { onSend(question, emptyList()) },
                                     label = { Text(question) },
                                     modifier = Modifier.padding(top = MaterialTheme.spacing.s),
                                 )
@@ -568,6 +616,7 @@ private fun ChatContent(
                                             message = answer,
                                             agentName = title,
                                             agentAvatar = agentAvatar,
+                                                onRetry = onRetry,
                                         )
                                     }
                                 }
@@ -581,6 +630,8 @@ private fun ChatContent(
                                     streamingReasoning = streamingReasoning,
                                     streamingReasoningSecs = streamingReasoningSecs,
                                     agentAvatar = agentAvatar,
+                                    streamingSearchActivity = streamingSearchActivity,
+                                    streamingCitations = streamingCitations,
                                 )
                             }
                         }
@@ -612,6 +663,7 @@ private fun ChatContent(
     }
 }
 
+
 @Composable
 private fun MessageRow(message: ChatMessage) {
     Row(
@@ -633,10 +685,25 @@ private fun MessageRow(message: ChatMessage) {
                 // timestamp clears the selection (matches assistant side).
                 SelectionContainer {
                     Column {
-                        Text(
-                            text = message.content.ifBlank { stringResource(R.string.chat_empty_message) },
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
+                        if (message.content.isNotBlank()) {
+                            Text(
+                                text = message.content,
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                        }
+                        message.attachments.filter { it.name.isNotBlank() || it.uri.isNotBlank() }.forEach { attachment ->
+                            Text(
+                                text = "📎 " + (attachment.name.takeIf(String::isNotBlank) ?: stringResource(R.string.chat_attach_fallback)),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            )
+                        }
+                        if (message.content.isBlank() && message.attachments.isEmpty()) {
+                            Text(
+                                text = stringResource(R.string.chat_empty_message),
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                        }
                         Timestamp(createdAt = message.createdAt)
                     }
                 }
@@ -681,6 +748,9 @@ private fun ChatLightPreview() {
             ),
             streaming = true,
             streamingText = "Typing a **Markdown** reply...",
+            streamingSearchActivity = WebSearchActivity(WebSearchStage.READING, listOf("Anlobehub local-first chat")),
+            webSearchPolicy = WebSearchPolicy(WebSearchMode.NATIVE),
+            webSearchAvailable = true,
             topics = listOf(ChatTopic(id = "t1", title = "Chit-chat")),
             activeTopicId = "t1",
             models = listOf(AIModel(id = "gpt-4o", displayName = "GPT-4o")),
@@ -719,3 +789,40 @@ private fun ChatDarkPreview() {
         )
     }
 }
+
+@Preview(name = "Web search sources")
+@Preview(name = "联网搜索来源", locale = "zh-rCN")
+@Composable
+private fun WebSearchSourcesPreview() {
+    AnlobehubTheme {
+        ChatContent(
+            messages = listOf(
+                ChatMessage(id = "question", role = "user", content = "What did the source say?"),
+                ChatMessage(
+                    id = "answer",
+                    role = "assistant",
+                    content = "A sourced answer.\n\n```kotlin\nval raw = true\n```",
+                    searchActivity = WebSearchActivity(WebSearchStage.COMPLETED, listOf("example source")),
+                    citations = listOf(WebCitation("https://example.com", "Example source", 0, 17)),
+                ),
+                ChatMessage(id = "next", role = "user", content = "Find more"),
+                ChatMessage(
+                    id = "stopped",
+                    role = "assistant",
+                    searchActivity = WebSearchActivity(WebSearchStage.SEARCHING, listOf("more examples")),
+                ),
+            ),
+            streaming = false,
+            streamingText = "",
+            webSearchPolicy = WebSearchPolicy(WebSearchMode.NATIVE),
+            webSearchAvailable = true,
+            topics = emptyList(),
+            activeTopicId = null,
+            models = emptyList(),
+            activeModel = AIModel(id = "gpt-5", displayName = "GPT-5"),
+            pendingFiles = emptyList(),
+            uploading = false,
+        )
+    }
+}
+

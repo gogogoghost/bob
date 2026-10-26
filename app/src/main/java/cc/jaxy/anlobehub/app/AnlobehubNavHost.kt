@@ -41,6 +41,8 @@ import cc.jaxy.anlobehub.feature.settings.ProviderDetailViewModel
 import cc.jaxy.anlobehub.feature.settings.ProviderModelsScreen
 import cc.jaxy.anlobehub.feature.settings.ProvidersScreen
 import cc.jaxy.anlobehub.feature.settings.SettingsScreen
+import cc.jaxy.anlobehub.feature.settings.WebSearchSettingsScreen
+import cc.jaxy.anlobehub.feature.settings.WebSearchProviderScreen
 import kotlinx.serialization.Serializable
 
 
@@ -67,6 +69,12 @@ data class TopicHistoryRoute(
 
 @Serializable
 data object SettingsRoute
+
+@Serializable
+data object WebSearchSettingsRoute
+
+@Serializable
+data class WebSearchProviderRoute(val providerId: String? = null)
 
 
 @Serializable
@@ -190,6 +198,7 @@ fun AnlobehubNavHost() {
             AgentEditScreen(
                 agentId = route.agentId,
                 onBack = { navController.popBackStack() },
+                onOpenWebSearchSettings = { navController.navigate(WebSearchSettingsRoute) },
                 onOpenModelPicker = { current ->
                     navController.navigate(
                         ModelPickerRoute(
@@ -263,7 +272,21 @@ fun AnlobehubNavHost() {
             )
         }
         composable<SettingsRoute> {
-            SettingsScreen(onProvidersClick = { navController.navigate(ProvidersRoute) })
+            SettingsScreen(
+                onProvidersClick = { navController.navigate(ProvidersRoute) },
+                onWebSearchClick = { navController.navigate(WebSearchSettingsRoute) },
+            )
+        }
+        composable<WebSearchSettingsRoute> {
+            WebSearchSettingsScreen(
+                onBack = { navController.popBackStack() },
+                onProviderClick = { id -> navController.navigate(WebSearchProviderRoute(id)) },
+                onAddProvider = { navController.navigate(WebSearchProviderRoute()) },
+            )
+        }
+        composable<WebSearchProviderRoute> { entry ->
+            val route = entry.toRoute<WebSearchProviderRoute>()
+            WebSearchProviderScreen(providerId = route.providerId, onBack = { navController.popBackStack() })
         }
         composable<ProvidersRoute> {
             ProvidersScreen(

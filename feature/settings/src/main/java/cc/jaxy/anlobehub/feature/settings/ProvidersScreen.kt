@@ -13,7 +13,6 @@ import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -50,6 +49,7 @@ import cc.jaxy.anlobehub.core.designsystem.component.ErrorBox
 import cc.jaxy.anlobehub.core.designsystem.component.ProviderIcon
 import cc.jaxy.anlobehub.core.designsystem.component.RefreshBox
 import cc.jaxy.anlobehub.core.designsystem.component.SkeletonList
+import cc.jaxy.anlobehub.core.designsystem.component.AnTextField
 import cc.jaxy.anlobehub.core.designsystem.component.SearchField
 import cc.jaxy.anlobehub.core.designsystem.text.UiText
 import cc.jaxy.anlobehub.core.designsystem.text.resolve
@@ -165,16 +165,16 @@ private fun ProvidersContent(
             text = {
                 Column {
                     Text(stringResource(R.string.provider_custom_direct_note))
-                    OutlinedTextField(
+                    AnTextField(
                         value = name,
                         onValueChange = { name = it },
-                        label = { Text(stringResource(R.string.provider_custom_name)) },
+                        label = stringResource(R.string.provider_custom_name),
                         singleLine = true,
                     )
-                    OutlinedTextField(
+                    AnTextField(
                         value = endpoint,
                         onValueChange = { endpoint = it },
-                        label = { Text(stringResource(R.string.provider_custom_endpoint)) },
+                        label = stringResource(R.string.provider_custom_endpoint),
                         placeholder = { Text(stringResource(R.string.provider_custom_endpoint_hint)) },
                         singleLine = true,
                     )

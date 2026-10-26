@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.filled.TravelExplore
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
@@ -28,11 +29,16 @@ import cc.jaxy.anlobehub.core.designsystem.theme.spacing
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(onProvidersClick: () -> Unit = {}) {
+fun SettingsScreen(
+    onProvidersClick: () -> Unit = {},
+    onWebSearchClick: () -> Unit = {},
+) {
     val viewModel: SettingsViewModel = hiltViewModel()
     val theme by viewModel.theme.collectAsStateWithLifecycle()
     val language by viewModel.language.collectAsStateWithLifecycle()
     val dynamicColor by viewModel.dynamicColor.collectAsStateWithLifecycle()
+    val searchSummary by viewModel.searchSummary.collectAsStateWithLifecycle()
+    val providerSummary by viewModel.providerSummary.collectAsStateWithLifecycle()
     val spacing = MaterialTheme.spacing
     Scaffold(topBar = {
         AnTopBar(title = stringResource(DsR.string.common_settings_title), onBack = null)
@@ -53,13 +59,26 @@ fun SettingsScreen(onProvidersClick: () -> Unit = {}) {
                     modifier = Modifier.padding(horizontal = spacing.l),
                 )
             }
+            item { SectionTitle(text = stringResource(R.string.section_web_search)) }
+            item {
+                Card(modifier = Modifier.padding(horizontal = spacing.l)) {
+                    SettingRow(
+                        icon = Icons.Filled.TravelExplore,
+                        title = stringResource(R.string.section_web_search),
+                        subtitle = searchSummary?.takeIf(String::isNotBlank)
+                            ?: stringResource(R.string.web_search_entry_description),
+                        onClick = onWebSearchClick,
+                    )
+                }
+            }
             item { SectionTitle(text = stringResource(R.string.providers_title)) }
             item {
                 Card(modifier = Modifier.padding(horizontal = spacing.l)) {
                     SettingRow(
                         icon = Icons.Filled.Cloud,
                         title = stringResource(R.string.providers_title),
-                        subtitle = stringResource(R.string.providers_local_description),
+                        subtitle = providerSummary?.let { stringResource(R.string.providers_enabled_format, it) }
+                            ?: stringResource(R.string.providers_local_description),
                         onClick = onProvidersClick,
                     )
                 }
