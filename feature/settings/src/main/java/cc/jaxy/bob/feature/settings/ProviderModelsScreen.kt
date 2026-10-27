@@ -145,7 +145,7 @@ internal class ProviderModelsViewModel @Inject constructor(
         if (_reasoning.value.containsKey(key) || _reasoningUi.value[key]?.loading == true) return
         viewModelScope.launch {
             _reasoningUi.value = _reasoningUi.value + (key to ReasoningUiState(loading = true))
-            when (val result = modelRepository.getReasoningConfig(model.id, model.providerId.orEmpty())) {
+            when (val result = modelRepository.getReasoningConfig("", model.id, model.providerId.orEmpty())) {
                 is AnResult.Ok -> {
                     _reasoning.value = _reasoning.value + (key to result.value)
                     _reasoningUi.value = _reasoningUi.value + (key to ReasoningUiState())
@@ -162,7 +162,7 @@ internal class ProviderModelsViewModel @Inject constructor(
             _reasoningUi.value = _reasoningUi.value + (cacheKey to ReasoningUiState(saving = true))
             val merged = current.raw.toMutableMap()
             if (value.isNullOrBlank()) merged.remove(key) else merged[key] = value
-            when (val result = modelRepository.updateReasoningConfig(model.id, model.providerId.orEmpty(), merged)) {
+            when (val result = modelRepository.updateReasoningConfig("", model.id, model.providerId.orEmpty(), merged)) {
                 is AnResult.Ok -> {
                     _reasoning.value = _reasoning.value + (
                         cacheKey to current.copy(

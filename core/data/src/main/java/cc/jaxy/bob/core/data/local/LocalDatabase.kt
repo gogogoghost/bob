@@ -18,8 +18,8 @@ data class MessageRow(@androidx.room.PrimaryKey val id: String, val topicId: Str
 data class ProviderRow(@androidx.room.PrimaryKey val id: String, val name: String, val source: String, val enabled: Boolean, val config: String)
 @Entity(tableName = "models", primaryKeys = ["providerId", "id"])
 data class ModelRow(val id: String, val providerId: String, val displayName: String, val enabled: Boolean, val metadata: String = "{}")
-@Entity(tableName = "reasoning", primaryKeys = ["providerId", "modelId"])
-data class ReasoningRow(val providerId: String, val modelId: String, val value: String)
+@Entity(tableName = "reasoning", primaryKeys = ["agentId", "providerId", "modelId"])
+data class ReasoningRow(val agentId: String, val providerId: String, val modelId: String, val value: String)
 
 @Dao
 interface LocalDao {
@@ -39,10 +39,12 @@ interface LocalDao {
     @Query("DELETE FROM topics WHERE id=:id") suspend fun deleteTopic(id: String)
     @Query("DELETE FROM topics WHERE agentId=:agentId") suspend fun deleteAgentTopics(agentId: String)
     @Query("DELETE FROM messages WHERE agentId=:agentId") suspend fun deleteAgentMessages(agentId: String)
+    @Query("DELETE FROM reasoning WHERE agentId=:agentId") suspend fun deleteAgentReasoning(agentId: String)
     @Transaction
     suspend fun removeAgent(agentId: String) {
         deleteAgentMessages(agentId)
         deleteAgentTopics(agentId)
+        deleteAgentReasoning(agentId)
         deleteAgent(agentId)
     }
     @Query("SELECT * FROM messages WHERE (:topicId IS NULL OR topicId=:topicId) AND (:agentId IS NULL OR agentId=:agentId) ORDER BY createdAt, id") suspend fun messages(topicId: String?, agentId: String?): List<MessageRow>
@@ -62,9 +64,12 @@ interface LocalDao {
     @Query("SELECT * FROM models WHERE providerId=:providerId AND id=:id") suspend fun model(providerId: String, id: String): ModelRow?
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun putModel(row: ModelRow)
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun putModels(rows: List<ModelRow>)
-    @Query("SELECT * FROM reasoning WHERE providerId=:providerId AND modelId=:modelId") suspend fun reasoning(providerId: String, modelId: String): ReasoningRow?
+    @Query("SELECT * FROM reasoning WHERE agentId=:agentId AND providerId=:providerId AND modelId=:modelId")
+    suspend fun reasoning(agentId: String, providerId: String, modelId: String): ReasoningRow?
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun putReasoning(row: ReasoningRow)
+    @Query("DELETE FROM reasoning WHERE agentId=:agentId AND providerId=:providerId AND modelId=:modelId")
+    suspend fun deleteReasoning(agentId: String, providerId: String, modelId: String)
 }
 
-@Database(entities = [AgentRow::class, TopicRow::class, MessageRow::class, ProviderRow::class, ModelRow::class, ReasoningRow::class], version = 1, exportSchema = false)
+@Database(entities = [AgentRow::class, TopicRow::class, MessageRow::class, ProviderRow::class, ModelRow::class, ReasoningRow::class], version = 2, exportSchema = false)
 abstract class LocalDatabase : RoomDatabase() { abstract fun dao(): LocalDao }

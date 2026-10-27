@@ -39,6 +39,7 @@ interface ChatCompletionRepository {
         history: List<ChatMessage>,
         temperature: Double? = null,
         sessionId: String? = null,
+        agentId: String? = null,
         searchPolicy: WebSearchPolicy = WebSearchPolicy(),
         /** Pure prompt: skip every app-added prompt (external search + its instructions). */
         purePrompt: Boolean = false,
@@ -64,6 +65,7 @@ class DirectChatCompletionRepository @Inject constructor(
         history: List<ChatMessage>,
         temperature: Double?,
         sessionId: String?,
+        agentId: String?,
         searchPolicy: WebSearchPolicy,
         purePrompt: Boolean,
     ): Flow<ChatStreamChunk> = channelFlow {
@@ -87,7 +89,11 @@ class DirectChatCompletionRepository @Inject constructor(
             if (provider.source != "custom" && providerId in setOf("chatgpt", "githubcopilot", "supergrok")) {
                 config = config + oauth.credentials(providerId)
             }
-            val reasoning = dao.reasoning(providerId, modelId)?.value?.let { json.decodeFromString<ReasoningConfig>(it).raw }.orEmpty()
+            val agentReasoning = dao.reasoning(agentId.orEmpty(), providerId, modelId)?.value
+            val fallbackReasoning = if (!agentId.isNullOrBlank()) dao.reasoning("", providerId, modelId)?.value else null
+            val reasoning = (agentReasoning ?: fallbackReasoning)
+                ?.let { json.decodeFromString<ReasoningConfig>(it).raw }
+                .orEmpty()
             val searchTarget = if (externalSearch) {
                 val candidate = searchProviders.providers.first().firstOrNull { it.id == effectivePolicy.providerId }
                     ?: throw ChatStreamException(

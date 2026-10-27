@@ -4,6 +4,7 @@ import cc.jaxy.bob.core.data.files.FileRepository
 import cc.jaxy.bob.core.data.local.LocalDao
 import cc.jaxy.bob.core.data.local.ProviderRow
 import cc.jaxy.bob.core.data.local.ModelRow
+import cc.jaxy.bob.core.data.local.ReasoningRow
 import cc.jaxy.bob.core.data.provider.ProviderSecretStore
 import cc.jaxy.bob.core.data.search.WebSearchMode
 import cc.jaxy.bob.core.data.search.WebSearchPolicy
@@ -223,6 +224,34 @@ data: {"type":"message_stop"}
     }
 
 
+
+    @Test
+    fun `reasoning settings are read from the active agent only`() = runBlocking {
+        LocalSseServer(responseBody = "data: {\"choices\":[{\"delta\":{\"content\":\"Local reply\"}}]}\n\ndata: [DONE]\n\n").use { server ->
+            val provider = ProviderRow("custom-agent", "Agent reasoning", "custom", true,
+                Json.encodeToString(mapOf("baseURL" to "${server.baseUrl}/v1", "__sdkType" to "openai")))
+            val rows = mapOf(
+                "agent-a" to ReasoningRow("agent-a", "custom-agent", "gpt-5", """{"effort":"high","raw":{"effort":"high"}}"""),
+            )
+            val repository = DirectChatCompletionRepository(
+                dao = providerDao(provider, "gpt-5") { agentId, providerId, modelId -> rows[agentId]?.copy(providerId = providerId, modelId = modelId) },
+                secrets = EmptySecrets,
+                files = UnusedFiles,
+                searchProviders = SearchProviders(),
+            )
+
+            repository.stream(provider.id, "gpt-5", "", listOf(ChatMessage(role = "user", content = "Hi")),
+                agentId = "agent-a").toList()
+            val agentA = Json.parseToJsonElement(server.awaitRequest().body).jsonObject
+            assertEquals("high", agentA.getValue("reasoning_effort").jsonPrimitive.content)
+
+            repository.stream(provider.id, "gpt-5", "", listOf(ChatMessage(role = "user", content = "Hi")),
+                agentId = "agent-b").toList()
+            val agentB = Json.parseToJsonElement(server.awaitRequest().body).jsonObject
+            assertTrue("reasoning_effort" !in agentB)
+        }
+    }
+
     @Test
     fun `search failure metadata reaches consumer before terminal exception`() = runBlocking {
         val paths = AtomicReference<List<String>>(emptyList())
@@ -268,14 +297,19 @@ data: [DONE]
         }
     }
 
-    private fun providerDao(provider: ProviderRow, modelId: String, modelEnabled: Boolean = true): LocalDao =
+    private fun providerDao(
+        provider: ProviderRow,
+        modelId: String,
+        modelEnabled: Boolean = true,
+        reasoning: (agentId: String, providerId: String, modelId: String) -> ReasoningRow? = { _, _, _ -> null },
+    ): LocalDao =
         java.lang.reflect.Proxy.newProxyInstance(
             LocalDao::class.java.classLoader,
             arrayOf(LocalDao::class.java),
         ) { proxy, method, args ->
             when (method.name) {
                 "provider" -> provider.takeIf { it.id == args?.firstOrNull() }
-                "reasoning" -> null
+                "reasoning" -> reasoning(args?.get(0) as String, args?.get(1) as String, args?.get(2) as String)
                 "model" -> if (args?.getOrNull(0) == provider.id && args.getOrNull(1) == modelId) {
                     ModelRow(
                         id = modelId,

@@ -25,6 +25,8 @@ class ModelsViewModel @Inject constructor(
     val selectedModelId: String? = savedStateHandle.get<String>("selectedModelId")?.takeIf { it.isNotBlank() }
     val selectedProviderId: String? = savedStateHandle.get<String>("selectedProviderId")?.takeIf { it.isNotBlank() }
     private val filterProviderId: String? = savedStateHandle.get<String>("filterProviderId")?.takeIf { it.isNotBlank() }
+    /** Agent scope for reasoning settings; null edits the shared fallback. */
+    val agentId: String? = savedStateHandle.get<String>("agentId")?.takeIf { it.isNotBlank() }
 
     data class UiState(
         val models: List<AIModel> = emptyList(),
@@ -70,11 +72,11 @@ class ModelsViewModel @Inject constructor(
 
 
     fun loadReasoning(model: AIModel) {
-        val key = reasoningKeyOf(model)
+        val key = reasoningKeyOf(model, agentId)
         if (_reasoning.value.containsKey(key) || _reasoningUi.value[key]?.loading == true) return
         viewModelScope.launch {
             _reasoningUi.value = _reasoningUi.value + (key to ReasoningUiState(loading = true))
-            when (val result = modelRepository.getReasoningConfig(model.id, model.providerId.orEmpty())) {
+            when (val result = modelRepository.getReasoningConfig(agentId.orEmpty(), model.id, model.providerId.orEmpty())) {
                 is AnResult.Ok -> {
                     _reasoning.value = _reasoning.value + (key to result.value)
                     _reasoningUi.value = _reasoningUi.value + (key to ReasoningUiState())
@@ -89,13 +91,13 @@ class ModelsViewModel @Inject constructor(
      * vendor-specific keys are preserved. A null [value] clears the key.
      */
     fun saveReasoning(model: AIModel, key: String, value: String?) {
-        val cacheKey = reasoningKeyOf(model)
+        val cacheKey = reasoningKeyOf(model, agentId)
         viewModelScope.launch {
             val current = _reasoning.value[cacheKey] ?: ReasoningConfig()
             _reasoningUi.value = _reasoningUi.value + (cacheKey to ReasoningUiState(saving = true))
             val merged = current.raw.toMutableMap()
             if (value.isNullOrBlank()) merged.remove(key) else merged[key] = value
-            when (val result = modelRepository.updateReasoningConfig(model.id, model.providerId.orEmpty(), merged)) {
+            when (val result = modelRepository.updateReasoningConfig(agentId.orEmpty(), model.id, model.providerId.orEmpty(), merged)) {
                 is AnResult.Ok -> {
                     _reasoning.value = _reasoning.value + (
                         cacheKey to current.copy(
@@ -113,18 +115,19 @@ class ModelsViewModel @Inject constructor(
     }
 
     fun consumeReasoningSaved(model: AIModel) {
-        val key = reasoningKeyOf(model)
+        val key = reasoningKeyOf(model, agentId)
         _reasoningUi.value[key]?.let { _reasoningUi.value = _reasoningUi.value + (key to it.copy(saved = false)) }
     }
 
     fun dismissReasoningError(model: AIModel) {
-        val key = reasoningKeyOf(model)
+        val key = reasoningKeyOf(model, agentId)
         _reasoningUi.value[key]?.let { _reasoningUi.value = _reasoningUi.value + (key to it.copy(error = null)) }
     }
 }
 
 /** Cache key for per-model reasoning config: provider + model id. */
-fun reasoningKeyOf(model: AIModel): String = model.providerId.orEmpty() + "\n" + model.id
+fun reasoningKeyOf(model: AIModel, agentId: String? = null): String =
+    agentId.orEmpty() + "\n" + model.providerId.orEmpty() + "\n" + model.id
 
 /** Reasoning value keys merged with [ReasoningConfig.raw]. */
 object ReasoningKeys {

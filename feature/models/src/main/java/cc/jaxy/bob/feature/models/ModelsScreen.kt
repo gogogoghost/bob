@@ -96,7 +96,7 @@ fun ModelsScreen(
     val reasoning by viewModel.reasoning.collectAsStateWithLifecycle()
     val reasoningUi by viewModel.reasoningUi.collectAsStateWithLifecycle()
     var detailKey by rememberSaveable { mutableStateOf<String?>(null) }
-    val detail = detailKey?.let { key -> uiState.models.find { reasoningKeyOf(it) == key } }
+    val detail = detailKey?.let { key -> uiState.models.find { reasoningKeyOf(it, viewModel.agentId) == key } }
     val scoped = remember(uiState.models, filterProviderId) {
         if (filterProviderId.isNullOrBlank()) uiState.models
         else uiState.models.filter { it.providerId == filterProviderId }
@@ -110,10 +110,11 @@ fun ModelsScreen(
         detail = detail,
         reasoning = reasoning,
         reasoningUi = reasoningUi,
+        reasoningScope = viewModel.agentId.orEmpty(),
         onRefresh = viewModel::refresh,
         onPick = onPick,
         onBack = onBack,
-        onShowDetail = { detailKey = reasoningKeyOf(it) },
+        onShowDetail = { detailKey = reasoningKeyOf(it, viewModel.agentId) },
         onDismissDetail = { detailKey = null },
         onLoadReasoning = viewModel::loadReasoning,
         onSaveReasoning = viewModel::saveReasoning,
@@ -133,6 +134,7 @@ private fun ModelsContent(
     detail: AIModel?,
     reasoning: Map<String, ReasoningConfig>,
     reasoningUi: Map<String, ReasoningUiState>,
+    reasoningScope: String = "",
     onRefresh: () -> Unit,
     onPick: (AIModel) -> Unit,
     onBack: () -> Unit,
@@ -255,7 +257,7 @@ private fun ModelsContent(
             }
         }
         if (detail != null) {
-            val key = reasoningKeyOf(detail)
+            val key = reasoningKeyOf(detail, reasoningScope)
             ModelDetailSheet(
                 model = detail,
                 config = reasoning[key],

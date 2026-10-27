@@ -92,6 +92,7 @@ data class ModelPickerRoute(
     val selectedModelId: String? = null,
     val selectedProviderId: String? = null,
     val filterProviderId: String? = null,
+    val agentId: String? = null,
 )
 
 @Composable
@@ -204,6 +205,7 @@ fun BobNavHost() {
                         ModelPickerRoute(
                             selectedModelId = current?.id,
                             selectedProviderId = current?.providerId,
+                            agentId = route.agentId,
                         ),
                     )
                 },
@@ -244,6 +246,7 @@ fun BobNavHost() {
                         ModelPickerRoute(
                             selectedModelId = current?.id,
                             selectedProviderId = current?.providerId,
+                            agentId = entry.toRoute<ChatRoute>().agentId,
                         ),
                     )
                 },

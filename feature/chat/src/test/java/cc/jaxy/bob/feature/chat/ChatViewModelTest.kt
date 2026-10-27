@@ -65,7 +65,7 @@ class ChatViewModelTest {
             }
         }
         val completions = object : ChatCompletionRepository {
-            override fun stream(providerId: String, modelId: String, systemPrompt: String, history: List<ChatMessage>, temperature: Double?, sessionId: String?, searchPolicy: WebSearchPolicy, purePrompt: Boolean): Flow<ChatStreamChunk> {
+            override fun stream(providerId: String, modelId: String, systemPrompt: String, history: List<ChatMessage>, temperature: Double?, sessionId: String?, agentId: String?, searchPolicy: WebSearchPolicy, purePrompt: Boolean): Flow<ChatStreamChunk> {
                 val channel = Channel<ChatStreamChunk>(Channel.UNLIMITED)
                 channels += channel
                 return flow { for (chunk in channel) emit(chunk) }
@@ -179,7 +179,7 @@ class ChatViewModelTest {
         }
         val completions = object : ChatCompletionRepository {
             override fun stream(providerId: String, modelId: String, systemPrompt: String, history: List<ChatMessage>,
-                temperature: Double?, sessionId: String?, searchPolicy: WebSearchPolicy, purePrompt: Boolean): Flow<ChatStreamChunk> {
+                temperature: Double?, sessionId: String?, agentId: String?, searchPolicy: WebSearchPolicy, purePrompt: Boolean): Flow<ChatStreamChunk> {
                 seenPolicy = searchPolicy
                 seenPure = purePrompt
                 assertEquals("", systemPrompt)
@@ -224,7 +224,7 @@ class ChatViewModelTest {
         val files = dependency(FileRepository::class.java) { error("Unexpected file operation $it") }
         val completions = object : ChatCompletionRepository {
             override fun stream(providerId: String, modelId: String, systemPrompt: String, history: List<ChatMessage>,
-                temperature: Double?, sessionId: String?, searchPolicy: WebSearchPolicy, purePrompt: Boolean): Flow<ChatStreamChunk> =
+                temperature: Double?, sessionId: String?, agentId: String?, searchPolicy: WebSearchPolicy, purePrompt: Boolean): Flow<ChatStreamChunk> =
                 flow { emit(ChatStreamChunk(textDelta = "hi", completion = ChatCompletion(ChatCompletionStatus.COMPLETED))) }
         }
         val written = mutableListOf<Pair<String, Map<String, kotlinx.serialization.json.JsonElement?>>>()
@@ -398,7 +398,7 @@ class ChatViewModelTest {
         }
         val completions = object : ChatCompletionRepository {
             override fun stream(providerId: String, modelId: String, systemPrompt: String, history: List<ChatMessage>,
-                temperature: Double?, sessionId: String?, searchPolicy: WebSearchPolicy, purePrompt: Boolean): Flow<ChatStreamChunk> = chunks
+                temperature: Double?, sessionId: String?, agentId: String?, searchPolicy: WebSearchPolicy, purePrompt: Boolean): Flow<ChatStreamChunk> = chunks
         }
         val agents = dependency(AgentRepository::class.java) { name ->
             if (name == "getConfig" && agentConfig != null) agentConfig() else error("Unexpected agent operation $name")

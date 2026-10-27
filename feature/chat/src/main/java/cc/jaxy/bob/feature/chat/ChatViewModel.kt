@@ -100,6 +100,7 @@ class ChatViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(UiState())
     val uiState: StateFlow<UiState> = _uiState.asStateFlow()
     private var temperature: Double? = null
+    private var reasoningKey: String? = null
     private var systemPrompt = ""
     private var purePrompt = false
     private var streamJob: Job? = null
@@ -330,10 +331,14 @@ class ChatViewModel @Inject constructor(
     fun clearError() { _uiState.value = _uiState.value.copy(error = null) }
 
     fun loadReasoning(model: AIModel) {
-        if (_uiState.value.reasoningLoading) return
+        val key = model.id + "\n" + model.providerId.orEmpty()
+        if (_uiState.value.reasoningLoading && reasoningKey == key) return
+        // Never let a previous model's values survive while the next model loads.
+        val previous = if (reasoningKey == key) _uiState.value.reasoningConfig else null
+        reasoningKey = key
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(reasoningLoading = true)
-            when (val r = modelRepository.getReasoningConfig(model.id, model.providerId.orEmpty())) {
+            _uiState.value = _uiState.value.copy(reasoningConfig = previous, reasoningLoading = true)
+            when (val r = modelRepository.getReasoningConfig(agentId, model.id, model.providerId.orEmpty())) {
                 is AnResult.Ok -> _uiState.value = _uiState.value.copy(reasoningConfig = r.value, reasoningLoading = false)
                 is AnResult.Err -> _uiState.value = _uiState.value.copy(reasoningLoading = false, error = r.error.toUiText())
             }
@@ -345,7 +350,7 @@ class ChatViewModel @Inject constructor(
             _uiState.value = _uiState.value.copy(reasoningSaving = true)
             val current = _uiState.value.reasoningConfig ?: ReasoningConfig()
             val merged = current.raw.toMutableMap().apply { if (value.isNullOrBlank()) remove(key) else put(key, value) }
-            when (val r = modelRepository.updateReasoningConfig(model.id, model.providerId.orEmpty(), merged)) {
+            when (val r = modelRepository.updateReasoningConfig(agentId, model.id, model.providerId.orEmpty(), merged)) {
                 is AnResult.Ok -> _uiState.value = _uiState.value.copy(reasoningConfig = current.copy(
                     effort = if (key == "effort") value else current.effort,
                     reasoningEffort = if (key == "reasoningEffort") value else current.reasoningEffort,
@@ -398,7 +403,7 @@ class ChatViewModel @Inject constructor(
             activeResponse = buffer
             var lastEmit = 0L
             completionRepository.stream(providerId, model.id, systemPrompt, history, temperature,
-                sessionId = topicId, searchPolicy = searchPolicy, purePrompt = purePrompt).collect { chunk ->
+                sessionId = topicId, agentId = agentId, searchPolicy = searchPolicy, purePrompt = purePrompt).collect { chunk ->
                 buffer.append(chunk)
                 val now = System.currentTimeMillis()
                 if (turn == generation && (now - lastEmit >= 80 || chunk.searchActivity != null || chunk.citations.isNotEmpty())) {

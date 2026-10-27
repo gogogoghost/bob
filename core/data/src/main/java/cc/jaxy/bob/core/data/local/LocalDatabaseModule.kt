@@ -3,6 +3,7 @@ package cc.jaxy.bob.core.data.local
 import android.content.Context
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import cc.jaxy.bob.core.common.util.providerAdapterType
 import cc.jaxy.bob.core.data.model.modelFamilyVersion
@@ -61,6 +62,23 @@ private data class BundledProvider(
 
 private const val CATALOG_ASSET = "provider_catalog.json"
 
+/** Existing model-level reasoning becomes the shared fallback until an agent overrides it. */
+private val MIGRATION_1_2 = object : Migration(1, 2) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `reasoning_new` (" +
+                "`agentId` TEXT NOT NULL, `providerId` TEXT NOT NULL, `modelId` TEXT NOT NULL, `value` TEXT NOT NULL, " +
+                "PRIMARY KEY(`agentId`, `providerId`, `modelId`))",
+        )
+        db.execSQL(
+            "INSERT OR REPLACE INTO `reasoning_new` (`agentId`, `providerId`, `modelId`, `value`) " +
+                "SELECT '', `providerId`, `modelId`, `value` FROM `reasoning`",
+        )
+        db.execSQL("DROP TABLE `reasoning`")
+        db.execSQL("ALTER TABLE `reasoning_new` RENAME TO `reasoning`")
+    }
+}
+
 @Module
 @InstallIn(SingletonComponent::class)
 object LocalDatabaseModule {
@@ -69,6 +87,7 @@ object LocalDatabaseModule {
     fun database(@ApplicationContext context: Context): LocalDatabase {
         lateinit var database: LocalDatabase
         database = Room.databaseBuilder(context, LocalDatabase::class.java, "local_agent.db")
+            .addMigrations(MIGRATION_1_2)
             .addCallback(object : RoomDatabase.Callback() {
                 override fun onCreate(db: SupportSQLiteDatabase) {
                     CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {

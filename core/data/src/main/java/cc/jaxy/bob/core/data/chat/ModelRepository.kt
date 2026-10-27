@@ -28,8 +28,8 @@ interface ModelRepository {
     suspend fun listChatModels(): AnResult<List<AIModel>>
     suspend fun listProviderModels(providerId: String): AnResult<List<AIModel>>
     suspend fun toggleModel(modelId: String, providerId: String, enabled: Boolean): AnResult<Unit>
-    suspend fun getReasoningConfig(modelId: String, providerId: String): AnResult<ReasoningConfig>
-    suspend fun updateReasoningConfig(modelId: String, providerId: String, value: Map<String, String>): AnResult<Unit>
+    suspend fun getReasoningConfig(agentId: String, modelId: String, providerId: String): AnResult<ReasoningConfig>
+    suspend fun updateReasoningConfig(agentId: String, modelId: String, providerId: String, value: Map<String, String>): AnResult<Unit>
 }
 
 @Singleton
@@ -124,13 +124,23 @@ class ModelRepositoryImpl @Inject constructor(private val dao: LocalDao, private
         require(!enabled || metadata.chatSupported) { "This model has no local chat adapter" }
         dao.putModel(old.copy(enabled = enabled))
     }
-    override suspend fun getReasoningConfig(modelId: String, providerId: String): AnResult<ReasoningConfig> = attempt {
-        val stored = dao.reasoning(providerId, modelId)?.value ?: return@attempt ReasoningConfig()
+    override suspend fun getReasoningConfig(agentId: String, modelId: String, providerId: String): AnResult<ReasoningConfig> = attempt {
+        val agentValue = dao.reasoning(agentId, providerId, modelId)?.value
+        // Preserve pre-migration model-level settings as a fallback; an
+        // agent-specific row always wins and never leaks to other agents.
+        val fallbackValue = if (agentId.isNotBlank()) dao.reasoning("", providerId, modelId)?.value else null
+        val stored = agentValue ?: fallbackValue ?: return@attempt ReasoningConfig()
         json.decodeFromString<ReasoningConfig>(stored)
     }
-    override suspend fun updateReasoningConfig(modelId: String, providerId: String, value: Map<String, String>): AnResult<Unit> = attempt {
-        val config = ReasoningConfig(value["effort"], value["reasoningEffort"], value["thinkingLevel"], value)
-        dao.putReasoning(ReasoningRow(providerId, modelId, json.encodeToString(config)))
+    override suspend fun updateReasoningConfig(agentId: String, modelId: String, providerId: String, value: Map<String, String>): AnResult<Unit> = attempt {
+        if (value.isEmpty()) {
+            // Clearing every option removes this agent's override so the shared
+            // fallback applies again; an empty row would otherwise look unset.
+            dao.deleteReasoning(agentId, providerId, modelId)
+        } else {
+            val config = ReasoningConfig(value["effort"], value["reasoningEffort"], value["thinkingLevel"], value)
+            dao.putReasoning(ReasoningRow(agentId, providerId, modelId, json.encodeToString(config)))
+        }
     }
 }
 private suspend fun <T> attempt(block: suspend () -> T): AnResult<T> = try { AnResult.Ok(block()) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { AnResult.Err(AnError("LOCAL_DATA", e.message ?: "Local data operation failed", e)) }
