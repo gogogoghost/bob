@@ -6,6 +6,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonObject
 
 internal fun JsonObject.cloudText(key: String): String? = (this[key] as? JsonPrimitive)?.contentOrNull
 
@@ -40,20 +41,45 @@ internal fun cloudGeminiBody(body: JsonObject, modelId: String): JsonObject = bu
     if (system.isNotEmpty()) put("systemInstruction", buildJsonObject {
         put("parts", JsonArray(listOf(textPart(system))))
     })
-    put("contents", JsonArray(cloudMessages(body).filter { it.cloudText("role") !in listOf("system", "developer") }.map { message ->
-        buildJsonObject {
-            put("role", if (message.cloudText("role") == "assistant") "model" else "user")
-            put("parts", JsonArray(contentParts(message).map { part ->
-                when (part.cloudText("type")) {
-                    "image_url" -> {
-                        val image = cloudImage(part)
-                        buildJsonObject { put("inlineData", buildJsonObject { put("mimeType", image.mimeType); put("data", image.data) }) }
-                    }
-                    else -> textPart(part.cloudText("text").orEmpty())
+    val contents = mutableListOf<JsonObject>()
+    val toolNames = HashMap<String, String>()
+    for (message in cloudMessages(body).filter { it.cloudText("role") !in listOf("system", "developer") }) {
+        val role = message.cloudText("role")
+        if (role == "tool") {
+            val part = buildJsonObject {
+                putJsonObject("functionResponse") {
+                    put("name", toolNames[message.cloudText("tool_call_id").orEmpty()].orEmpty())
+                    putJsonObject("response") { put("result", toolResultValue(message)) }
                 }
-            }))
+            }
+            appendParts(contents, "user", listOf(part), merge = true)
+            continue
         }
-    }))
+        val parts = contentParts(message).mapNotNull { part ->
+            when (part.cloudText("type")) {
+                "image_url" -> {
+                    val image = cloudImage(part)
+                    buildJsonObject { put("inlineData", buildJsonObject { put("mimeType", image.mimeType); put("data", image.data) }) }
+                }
+                else -> part.cloudText("text").orEmpty().takeIf(String::isNotEmpty)?.let(::textPart)
+            }
+        }.toMutableList()
+        if (role == "assistant") canonicalToolCalls(message).forEach { call ->
+            val function = call["function"] as? JsonObject ?: return@forEach
+            val name = function.cloudText("name").orEmpty()
+            toolNames[call.cloudText("id").orEmpty()] = name
+            parts += buildJsonObject {
+                putJsonObject("functionCall") {
+                    put("name", name)
+                    put("args", toolInput(function.cloudText("arguments").orEmpty()))
+                }
+            }
+        }
+        if (parts.isEmpty()) continue
+        appendParts(contents, if (role == "assistant") "model" else "user", parts, merge = true)
+    }
+    put("contents", JsonArray(contents))
+    if ((body["tools"] as? JsonArray)?.isNotEmpty() == true) put("tools", JsonArray(listOf(geminiWebSearchTool())))
     val generation = buildJsonObject {
         body["temperature"]?.let { put("temperature", it) }
         body["top_p"]?.let { put("topP", it) }
@@ -72,49 +98,95 @@ internal fun cloudAnthropicBody(body: JsonObject, version: String, modelId: Stri
     val adaptive = cloudClaudeAdaptive(body.cloudText("reasoning_effort"), modelId)
     adaptive?.forEach { (key, value) -> put(key, value) }
     if (adaptive == null && !cloudModernClaude(modelId)) body["temperature"]?.let { put("temperature", it) }
-    put("messages", JsonArray(cloudMessages(body).filter { it.cloudText("role") !in listOf("system", "developer") }.map { message ->
-        buildJsonObject {
-            put("role", if (message.cloudText("role") == "assistant") "assistant" else "user")
-            put("content", JsonArray(contentParts(message).map { part ->
-                when (part.cloudText("type")) {
-                    "image_url" -> {
-                        val image = cloudImage(part)
-                        buildJsonObject {
-                            put("type", "image")
-                            put("source", buildJsonObject { put("type", "base64"); put("media_type", image.mimeType); put("data", image.data) })
-                        }
-                    }
-                    else -> buildJsonObject { put("type", "text"); put("text", part.cloudText("text").orEmpty()) }
-                }
-            }))
+    if ((body["tools"] as? JsonArray)?.isNotEmpty() == true) put("tools", JsonArray(listOf(anthropicWebSearchTool())))
+    val messages = mutableListOf<JsonObject>()
+    for (message in cloudMessages(body).filter { it.cloudText("role") !in listOf("system", "developer") }) {
+        val role = message.cloudText("role")
+        if (role == "tool") {
+            appendContent(messages, "user", listOf(buildJsonObject {
+                put("type", "tool_result")
+                put("tool_use_id", message.cloudText("tool_call_id").orEmpty())
+                put("content", toolResultText(message))
+            }), merge = true) { it.cloudText("type") == "tool_result" }
+            continue
         }
-    }))
+        val assistant = role == "assistant"
+        val blocks = contentParts(message).mapNotNull { part ->
+            when (part.cloudText("type")) {
+                "image_url" -> {
+                    val image = cloudImage(part)
+                    buildJsonObject {
+                        put("type", "image")
+                        put("source", buildJsonObject { put("type", "base64"); put("media_type", image.mimeType); put("data", image.data) })
+                    }
+                }
+                else -> part.cloudText("text").orEmpty().takeIf(String::isNotEmpty)?.let {
+                    buildJsonObject { put("type", "text"); put("text", it) }
+                }
+            }
+        }.toMutableList()
+        if (assistant) canonicalToolCalls(message).forEach { call ->
+            val function = call["function"] as? JsonObject ?: return@forEach
+            blocks += buildJsonObject {
+                put("type", "tool_use")
+                put("id", call.cloudText("id").orEmpty())
+                put("name", function.cloudText("name").orEmpty())
+                put("input", toolInput(function.cloudText("arguments").orEmpty()))
+            }
+        }
+        if (blocks.isEmpty()) continue
+        appendContent(messages, if (assistant) "assistant" else "user", blocks, merge = false)
+    }
+    put("messages", JsonArray(messages))
 }
 
 internal fun cloudBedrockBody(body: JsonObject, modelId: String): JsonObject = buildJsonObject {
     val system = systemText(body)
     if (system.isNotEmpty()) put("system", JsonArray(listOf(textPart(system))))
-    put("messages", JsonArray(cloudMessages(body).filter { it.cloudText("role") !in listOf("system", "developer") }.map { message ->
-        buildJsonObject {
-            put("role", if (message.cloudText("role") == "assistant") "assistant" else "user")
-            put("content", JsonArray(contentParts(message).map { part ->
-                when (part.cloudText("type")) {
-                    "image_url" -> {
-                        val image = cloudImage(part)
-                        val format = when (image.mimeType) {
-                            "image/jpeg" -> "jpeg"
-                            "image/png" -> "png"
-                            "image/gif" -> "gif"
-                            "image/webp" -> "webp"
-                            else -> error("Bedrock does not support image format ${image.mimeType}")
-                        }
-                        buildJsonObject { put("image", buildJsonObject { put("format", format); put("source", buildJsonObject { put("bytes", image.data) }) }) }
-                    }
-                    else -> textPart(part.cloudText("text").orEmpty())
+    if ((body["tools"] as? JsonArray)?.isNotEmpty() == true) put("toolConfig", bedrockWebSearchToolConfig())
+    val messages = mutableListOf<JsonObject>()
+    for (message in cloudMessages(body).filter { it.cloudText("role") !in listOf("system", "developer") }) {
+        val role = message.cloudText("role")
+        if (role == "tool") {
+            appendContent(messages, "user", listOf(buildJsonObject {
+                putJsonObject("toolResult") {
+                    put("toolUseId", message.cloudText("tool_call_id").orEmpty())
+                    put("content", JsonArray(listOf(textPart(toolResultText(message)))))
                 }
-            }))
+            }), merge = true) { "toolResult" in it }
+            continue
         }
-    }))
+        val assistant = role == "assistant"
+        val blocks = contentParts(message).mapNotNull { part ->
+            when (part.cloudText("type")) {
+                "image_url" -> {
+                    val image = cloudImage(part)
+                    val format = when (image.mimeType) {
+                        "image/jpeg" -> "jpeg"
+                        "image/png" -> "png"
+                        "image/gif" -> "gif"
+                        "image/webp" -> "webp"
+                        else -> error("Bedrock does not support image format ${image.mimeType}")
+                    }
+                    buildJsonObject { put("image", buildJsonObject { put("format", format); put("source", buildJsonObject { put("bytes", image.data) }) }) }
+                }
+                else -> part.cloudText("text").orEmpty().takeIf(String::isNotEmpty)?.let(::textPart)
+            }
+        }.toMutableList()
+        if (assistant) canonicalToolCalls(message).forEach { call ->
+            val function = call["function"] as? JsonObject ?: return@forEach
+            blocks += buildJsonObject {
+                putJsonObject("toolUse") {
+                    put("toolUseId", call.cloudText("id").orEmpty())
+                    put("name", function.cloudText("name").orEmpty())
+                    put("input", toolInput(function.cloudText("arguments").orEmpty()))
+                }
+            }
+        }
+        if (blocks.isEmpty()) continue
+        appendContent(messages, if (assistant) "assistant" else "user", blocks, merge = false)
+    }
+    put("messages", JsonArray(messages))
     val inference = buildJsonObject {
         (body["max_completion_tokens"] ?: body["max_tokens"])?.let { put("maxTokens", it) }
         // New Claude generations reject temperature/topP even when thinking is disabled.
@@ -150,20 +222,96 @@ internal fun cloudResponsesBody(body: JsonObject, deployment: String): JsonObjec
     put("store", false)
     val instructions = systemText(body)
     if (instructions.isNotEmpty()) put("instructions", instructions)
-    put("input", JsonArray(cloudMessages(body).filter { it.cloudText("role") !in listOf("system", "developer") }.map { message ->
-        val assistant = message.cloudText("role") == "assistant"
-        buildJsonObject {
-            put("role", if (assistant) "assistant" else "user")
-            put("content", JsonArray(contentParts(message).map { part ->
-                if (part.cloudText("type") == "image_url") buildJsonObject {
-                    put("type", "input_image")
-                    put("image_url", (part["image_url"] as? JsonObject)?.cloudText("url").orEmpty())
-                } else buildJsonObject { put("type", if (assistant) "output_text" else "input_text"); put("text", part.cloudText("text").orEmpty()) }
-            }))
+    if ((body["tools"] as? JsonArray)?.isNotEmpty() == true) put("tools", JsonArray(listOf(responsesWebSearchTool())))
+    val input = mutableListOf<JsonObject>()
+    for (message in cloudMessages(body).filter { it.cloudText("role") !in listOf("system", "developer") }) {
+        val role = message.cloudText("role")
+        if (role == "tool") {
+            input += buildJsonObject {
+                put("type", "function_call_output")
+                put("call_id", message.cloudText("tool_call_id").orEmpty())
+                put("output", toolResultText(message))
+            }
+            continue
         }
-    }))
+        val assistant = role == "assistant"
+        canonicalToolCalls(message).forEach { call ->
+            val function = call["function"] as? JsonObject ?: return@forEach
+            input += buildJsonObject {
+                put("type", "function_call")
+                put("call_id", call.cloudText("id").orEmpty())
+                put("name", function.cloudText("name").orEmpty())
+                put("arguments", function.cloudText("arguments").orEmpty().ifBlank { "{}" })
+            }
+        }
+        val parts = contentParts(message).mapNotNull { part ->
+            if (part.cloudText("type") == "image_url") buildJsonObject {
+                put("type", "input_image")
+                put("image_url", (part["image_url"] as? JsonObject)?.cloudText("url").orEmpty())
+            } else part.cloudText("text").orEmpty().takeIf(String::isNotEmpty)?.let {
+                buildJsonObject { put("type", if (assistant) "output_text" else "input_text"); put("text", it) }
+            }
+        }
+        if (parts.isNotEmpty()) input += buildJsonObject {
+            put("role", if (assistant) "assistant" else "user")
+            put("content", JsonArray(parts))
+        }
+    }
+    put("input", JsonArray(input))
     (body["max_completion_tokens"] ?: body["max_tokens"])?.let { put("max_output_tokens", it) }
     body.cloudText("reasoning_effort")?.let { effort -> put("reasoning", buildJsonObject { put("effort", effort) }) }
+}
+
+private fun canonicalToolCalls(message: JsonObject): List<JsonObject> =
+    (message["tool_calls"] as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }
+
+private fun toolResultText(message: JsonObject): String =
+    contentParts(message).mapNotNull { it.cloudText("text") }.joinToString("")
+
+private fun toolResultValue(message: JsonObject): kotlinx.serialization.json.JsonElement {
+    val text = toolResultText(message)
+    return runCatching { kotlinx.serialization.json.Json.parseToJsonElement(text) }.getOrNull() ?: JsonPrimitive(text)
+}
+
+/** Provider-native message lists must alternate; merge only blocks that belong to one turn. */
+private fun appendContent(
+    messages: MutableList<JsonObject>,
+    role: String,
+    blocks: List<JsonObject>,
+    merge: Boolean,
+    mergeable: (JsonObject) -> Boolean = { true },
+) {
+    val last = messages.lastOrNull()
+    val existing = (last?.get("content") as? JsonArray).orEmpty()
+    val existingObjects = existing.mapNotNull { it as? JsonObject }
+    if (merge && last != null && last.cloudText("role") == role && existingObjects.isNotEmpty() && existingObjects.all(mergeable)) {
+        messages[messages.lastIndex] = buildJsonObject {
+            put("role", role)
+            put("content", JsonArray(existing + blocks))
+        }
+    } else {
+        messages += buildJsonObject {
+            put("role", role)
+            put("content", JsonArray(blocks))
+        }
+    }
+}
+
+/** Gemini uses `parts` instead of `content`; merging same-role turns keeps tool results together. */
+private fun appendParts(contents: MutableList<JsonObject>, role: String, parts: List<JsonObject>, merge: Boolean) {
+    val last = contents.lastOrNull()
+    val existing = (last?.get("parts") as? JsonArray).orEmpty()
+    if (merge && last != null && last.cloudText("role") == role) {
+        contents[contents.lastIndex] = buildJsonObject {
+            put("role", role)
+            put("parts", JsonArray(existing + parts))
+        }
+    } else {
+        contents += buildJsonObject {
+            put("role", role)
+            put("parts", JsonArray(parts))
+        }
+    }
 }
 
 private fun cloudModernClaude(modelId: String): Boolean =

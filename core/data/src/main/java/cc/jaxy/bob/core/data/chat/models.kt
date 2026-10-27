@@ -40,6 +40,10 @@ data class ChatMessage(
     val attachments: List<ChatAttachment> = emptyList(),
     /** Opaque Responses reasoning items; replay only to the same provider and model. */
     val providerContext: List<JsonObject> = emptyList(),
+    /** Model-requested function calls. Only used inside a single generation loop. */
+    val toolCalls: List<ChatToolCall> = emptyList(),
+    /** Tool result linkage for a transient `tool` role message. */
+    val toolCallId: String? = null,
     /** Null for messages created before completion tracking was introduced. */
     val completion: ChatCompletion? = null,
     val searchActivity: WebSearchActivity? = null,

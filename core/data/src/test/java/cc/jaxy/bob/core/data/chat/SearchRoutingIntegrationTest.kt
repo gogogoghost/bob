@@ -14,6 +14,7 @@ import com.sun.net.httpserver.HttpServer
 import java.lang.reflect.Proxy
 import java.net.InetSocketAddress
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.toList
@@ -25,7 +26,7 @@ import org.junit.Test
 
 class SearchRoutingIntegrationTest {
     @Test
-    fun `external selection uses that service even on a native-capable model and leaves saved question unchanged`() = runBlocking {
+    fun `external search is a model tool and only runs after the model asks for it`() = runBlocking {
         RoutingServer().use { server ->
             val question = "Latest Android & agent news?"
             val history = listOf(ChatMessage(role = "user", content = question))
@@ -33,17 +34,71 @@ class SearchRoutingIntegrationTest {
                 server.repository().stream("openai", "gpt-4.1", "Answer carefully", history,
                     searchPolicy = WebSearchPolicy(WebSearchMode.PROVIDER, "tavily")).toList()
             }
-            assertEquals(listOf("/search", "/v1/responses"), server.requests.map { it.path })
-            val search = server.requests.first()
+            assertEquals(listOf("/v1/responses", "/search", "/v1/responses"), server.requests.map { it.path })
+            val first = server.requests.first().body
+            val tool = first.getValue("tools").jsonArray.single().jsonObject
+            assertEquals("function", tool.getValue("type").jsonPrimitive.content)
+            assertEquals("web_search", tool.getValue("name").jsonPrimitive.content)
+            assertEquals(question, first.getValue("input").jsonArray.first().jsonObject
+                .getValue("content").jsonArray.single().jsonObject.getValue("text").jsonPrimitive.content)
+            assertFalse(first.toString().contains("https://example.com/source"))
+            val search = server.requests.first { it.path == "/search" }
             assertEquals(question, search.body.getValue("query").jsonPrimitive.content)
             assertFalse(search.body.toString().contains("model-secret"))
             assertTrue(search.authorization == "Bearer search-secret" || search.body["api_key"]?.jsonPrimitive?.content == "search-secret")
-            val inference = server.requests.last().body
-            assertTrue((inference["tools"] as? JsonArray).isNullOrEmpty())
-            assertTrue(inference.toString().contains("https://example.com/source"))
+            val second = server.requests.last().body.toString()
+            assertTrue(second.contains("function_call_output"))
+            assertTrue(second.contains("https://example.com/source"))
+            assertTrue(second.contains("Verified source evidence"))
             assertEquals(question, history.single().content)
             assertEquals(listOf(WebSearchStage.SEARCHING, WebSearchStage.COMPLETED), chunks.mapNotNull { it.searchActivity?.stage })
             assertEquals(listOf("https://example.com/source"), chunks.flatMap { it.citations }.map { it.url }.distinct())
+            assertEquals("Grounded answer", chunks.joinToString("") { it.textDelta })
+            assertEquals(ChatCompletionStatus.COMPLETED, chunks.last().completion?.status)
+        }
+    }
+
+    @Test
+    fun `a model that does not need a search never contacts the search service`() = runBlocking {
+        RoutingServer(toolCalls = 0).use { server ->
+            val chunks = withTimeout(5_000) {
+                server.repository().stream("openai", "gpt-4.1", "", listOf(ChatMessage(role = "user", content = "Say hello")),
+                    searchPolicy = WebSearchPolicy(WebSearchMode.PROVIDER, "tavily")).toList()
+            }
+            assertEquals(listOf("/v1/responses"), server.requests.map { it.path })
+            assertTrue(chunks.none { it.searchActivity != null || it.citations.isNotEmpty() })
+            assertEquals("Direct answer", chunks.joinToString("") { it.textDelta })
+            assertEquals(ChatCompletionStatus.COMPLETED, chunks.last().completion?.status)
+        }
+    }
+
+    @Test
+    fun `the model can search twice before answering`() = runBlocking {
+        RoutingServer(toolCalls = 2).use { server ->
+            val chunks = withTimeout(5_000) {
+                server.repository().stream("openai", "gpt-4.1", "", listOf(ChatMessage(role = "user", content = "Compare news")),
+                    searchPolicy = WebSearchPolicy(WebSearchMode.PROVIDER, "tavily")).toList()
+            }
+            assertEquals(5, server.requests.size)
+            assertEquals(2, server.requests.count { it.path == "/search" })
+            assertEquals("Grounded answer", chunks.joinToString("") { it.textDelta })
+            assertEquals(ChatCompletionStatus.COMPLETED, chunks.last().completion?.status)
+            assertEquals(2, chunks.count { it.searchActivity?.stage == WebSearchStage.COMPLETED })
+            val lastInput = server.requests.last().body.getValue("input").jsonArray.map { it.jsonObject }
+            assertEquals(2, lastInput.count { it["type"]?.jsonPrimitive?.content == "function_call_output" })
+        }
+    }
+
+    @Test
+    fun `malformed tool arguments are returned to the model instead of executing a search`() = runBlocking {
+        RoutingServer(malformedArguments = true).use { server ->
+            val chunks = withTimeout(5_000) {
+                server.repository().stream("openai", "gpt-4.1", "", listOf(ChatMessage(role = "user", content = "Latest news")),
+                    searchPolicy = WebSearchPolicy(WebSearchMode.PROVIDER, "tavily")).toList()
+            }
+            assertEquals(listOf("/v1/responses", "/v1/responses"), server.requests.map { it.path })
+            assertTrue(server.requests.last().body.toString().contains("requires a non-empty query"))
+            assertTrue(chunks.none { it.searchActivity != null })
             assertEquals("Grounded answer", chunks.joinToString("") { it.textDelta })
             assertEquals(ChatCompletionStatus.COMPLETED, chunks.last().completion?.status)
         }
@@ -88,14 +143,14 @@ class SearchRoutingIntegrationTest {
             assertTrue(server.requests.none { it.path == "/search" })
             val body = server.requests.single { it.path == "/v1/responses" }.body
             assertFalse(body.containsKey("tools"))
+            assertFalse(body.toString().contains("web_search"))
             assertEquals("Custom instructions", body.getValue("instructions").jsonPrimitive.content)
             assertTrue("untrusted" !in body.toString())
-            assertTrue("Retrieved web sources" !in body.toString())
         }
     }
 
     @Test
-    fun `disabled or removed selected service fails visibly without native fallback or inference`() = runBlocking {
+    fun `disabled or removed selected service fails before inference without a search`() = runBlocking {
         RoutingServer().use { server ->
             for (providers in listOf(listOf(server.searchProvider.copy(enabled = false)), emptyList())) {
                 val chunks = mutableListOf<ChatStreamChunk>()
@@ -105,16 +160,17 @@ class SearchRoutingIntegrationTest {
                 }.exceptionOrNull()
                 assertTrue(failure is ChatStreamException)
                 assertEquals(ChatCompletionStatus.FAILED, (failure as ChatStreamException).completion.status)
-                assertEquals(listOf(WebSearchStage.SEARCHING, WebSearchStage.FAILED), chunks.mapNotNull { it.searchActivity?.stage })
-                assertTrue(server.requests.isEmpty())
+                assertTrue(chunks.none { it.searchActivity != null })
             }
+            assertTrue(server.requests.isEmpty())
         }
     }
 
     private data class Request(val path: String, val body: JsonObject, val authorization: String?)
 
-    private class RoutingServer : AutoCloseable {
+    private class RoutingServer(private val toolCalls: Int = 1, private val malformedArguments: Boolean = false) : AutoCloseable {
         private val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        private val inferenceCount = AtomicInteger()
         val requests = CopyOnWriteArrayList<Request>()
         val searchProvider: WebSearchProvider
 
@@ -124,14 +180,19 @@ class SearchRoutingIntegrationTest {
                 val body = Json.parseToJsonElement(exchange.requestBody.bufferedReader().use { it.readText() }).jsonObject
                 requests += Request(path, body, exchange.requestHeaders.getFirst("Authorization"))
                 val search = path == "/search"
-                val native = (body["tools"] as? JsonArray).orEmpty().any { it.jsonObject["type"]?.jsonPrimitive?.content == "web_search" }
-                val searchItem = "{\"id\":\"ws\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"query\":\"Latest news\"}}"
-                val payload = if (search) {
-                    "{\"results\":[{\"url\":\"https://example.com/source\",\"title\":\"Source\",\"content\":\"Verified source evidence\"}]}"
-                } else buildString {
-                    if (native) append("data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":$searchItem}\n\n")
-                    append("data: {\"type\":\"response.output_text.delta\",\"output_index\":${if (native) 1 else 0},\"content_index\":0,\"delta\":\"Grounded answer\"}\n\n")
-                    append("data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[${if (native) "$searchItem," else ""}{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"Grounded answer\"}]}]}}\n\n")
+                val tools = (body["tools"] as? JsonArray).orEmpty().map { it.jsonObject }
+                val native = tools.any { it["type"]?.jsonPrimitive?.content == "web_search" }
+                val functionTool = tools.any {
+                    it["type"]?.jsonPrimitive?.content == "function" && it["name"]?.jsonPrimitive?.content == "web_search"
+                }
+                val payload = when {
+                    search -> """{"results":[{"url":"https://example.com/source","title":"Source","content":"Verified source evidence"}]}"""
+                    native -> nativePayload()
+                    else -> {
+                        val round = inferenceCount.getAndIncrement()
+                        if (functionTool && round < toolCalls) toolCallPayload(round)
+                        else textPayload(if (functionTool && toolCalls > 0) "Grounded answer" else "Direct answer")
+                    }
                 }
                 val bytes = payload.toByteArray()
                 exchange.responseHeaders.add("Content-Type", if (search) "application/json" else "text/event-stream")
@@ -141,6 +202,79 @@ class SearchRoutingIntegrationTest {
             server.start()
             searchProvider = WebSearchProvider("tavily", "Tavily", WebSearchProtocol.TAVILY,
                 "http://127.0.0.1:${server.address.port}/search", enabled = true, builtin = true)
+        }
+
+        private fun toolCallPayload(round: Int): String {
+            val item = buildJsonObject {
+                put("id", "fc_$round")
+                put("type", "function_call")
+                put("call_id", "call_$round")
+                put("name", "web_search")
+                put("arguments", if (malformedArguments) "{}" else """{"query":"Latest Android & agent news?"}""")
+                put("status", "completed")
+            }
+            val done = buildJsonObject {
+                put("type", "response.output_item.done")
+                put("output_index", 0)
+                put("item", item)
+            }
+            val completed = buildJsonObject {
+                put("type", "response.completed")
+                putJsonObject("response") {
+                    put("status", "completed")
+                    putJsonArray("output") { add(item) }
+                }
+            }
+            return "data: $done\n\ndata: $completed\n\n"
+        }
+
+        private fun textPayload(text: String): String {
+            val item = buildJsonObject {
+                put("type", "message")
+                putJsonArray("content") { add(buildJsonObject { put("type", "output_text"); put("text", text) }) }
+            }
+            val delta = buildJsonObject {
+                put("type", "response.output_text.delta")
+                put("output_index", 0); put("content_index", 0); put("delta", text)
+            }
+            val completed = buildJsonObject {
+                put("type", "response.completed")
+                putJsonObject("response") {
+                    put("status", "completed")
+                    putJsonArray("output") { add(item) }
+                }
+            }
+            return "data: $delta\n\ndata: $completed\n\n"
+        }
+
+        private fun nativePayload(): String {
+            val searchItem = buildJsonObject {
+                put("id", "ws")
+                put("type", "web_search_call")
+                put("status", "completed")
+                putJsonObject("action") { put("type", "search"); put("query", "Latest news") }
+            }
+            val textItem = buildJsonObject {
+                put("type", "message")
+                putJsonArray("content") { add(buildJsonObject { put("type", "output_text"); put("text", "Grounded answer") }) }
+            }
+            val done = buildJsonObject {
+                put("type", "response.output_item.done")
+                put("output_index", 0)
+                put("item", searchItem)
+            }
+            val delta = buildJsonObject {
+                put("type", "response.output_text.delta")
+                put("output_index", 1); put("content_index", 0); put("delta", "Grounded answer")
+            }
+            val completed = buildJsonObject {
+                put("type", "response.completed")
+                putJsonObject("response") {
+                    put("status", "completed")
+                    putJsonArray("output") { add(searchItem); add(textItem) }
+                }
+            }
+            return "data: $done\n\ndata: $delta\n\ndata: $completed\n\n"
         }
 
         fun repository(source: String = "builtin", providers: List<WebSearchProvider> = listOf(searchProvider)): DirectChatCompletionRepository {

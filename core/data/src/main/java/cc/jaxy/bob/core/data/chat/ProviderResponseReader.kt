@@ -26,7 +26,7 @@ internal suspend fun executeProviderRequest(
     try {
         withContext(Dispatchers.IO) {
             try {
-                call.execute().use { response -> readProviderResponse(response, prepared.protocol, prepared.webSearchEnabled, emit) }
+                call.execute().use { response -> readProviderResponse(response, prepared.protocol, prepared.webSearchEnabled, prepared.toolSearch, emit) }
             } catch (error: IOException) {
                 // Closing a cancelled call must remain coroutine cancellation, not socket failure.
                 currentCoroutineContext().ensureActive()
@@ -38,14 +38,22 @@ internal suspend fun executeProviderRequest(
     }
 }
 
-private suspend fun readProviderResponse(response: Response, protocol: String, webSearchEnabled: Boolean, emit: suspend (ChatStreamChunk) -> Unit) {
+private suspend fun readProviderResponse(
+    response: Response,
+    protocol: String,
+    webSearchEnabled: Boolean,
+    toolSearch: Boolean,
+    emit: suspend (ChatStreamChunk) -> Unit,
+) {
     val body = response.body
     if (!response.isSuccessful) throw IOException("Provider returned HTTP ${response.code}: ${body.string().take(1500)}")
     val completion = ProviderCompletionState(protocol)
     val search = if (webSearchEnabled && protocol == "responses") NativeWebSearchParser() else null
+    val tools = if (toolSearch) ToolCallParser(protocol) else null
     var receivedText = false
     var receivedContent = false
     var receivedContext = false
+    var receivedToolCall = false
     suspend fun consume(obj: JsonObject, event: String = "", complete: Boolean = false) {
         // Recover snapshot-only text without duplicating previously streamed reasoning or opaque items.
         val terminalResponse = protocol == "responses" && (obj.string("type") ?: event) in RESPONSE_END_EVENTS
@@ -56,12 +64,18 @@ private suspend fun readProviderResponse(response: Response, protocol: String, w
         } else providerChunk(protocol, obj, event, complete)
         val error = providerError(obj)
         val chunk = search?.consume(obj, event, complete, contentChunk, error) ?: contentChunk
-        val hasContent = chunk != null && (chunk.textDelta.isNotEmpty() || !chunk.reasoningDelta.isNullOrEmpty() || chunk.providerContext.isNotEmpty())
+        val calls = tools?.consume(obj, event, complete).orEmpty()
+        val hasContent = chunk != null && (chunk.textDelta.isNotEmpty() || !chunk.reasoningDelta.isNullOrEmpty() || chunk.providerContext.isNotEmpty()) ||
+            calls.isNotEmpty()
         if (chunk != null) {
             receivedText = receivedText || chunk.textDelta.isNotBlank()
             receivedContent = receivedContent || chunk.textDelta.isNotEmpty() || !chunk.reasoningDelta.isNullOrEmpty()
             receivedContext = receivedContext || chunk.providerContext.isNotEmpty()
             if (hasContent || chunk.searchActivity != null || chunk.citations.isNotEmpty()) emit(chunk)
+        }
+        if (calls.isNotEmpty()) {
+            receivedToolCall = true
+            emit(ChatStreamChunk(toolCalls = calls))
         }
         error?.let {
             throw ChatStreamException(ChatCompletion(ChatCompletionStatus.FAILED, obj.string("type") ?: event.takeIf(String::isNotBlank)), it)
@@ -113,8 +127,16 @@ private suspend fun readProviderResponse(response: Response, protocol: String, w
             if (data.isNotEmpty() || event.isNotEmpty()) dispatch()
         }
     }
-    val result = completion.result()
-    if (result.status == ChatCompletionStatus.COMPLETED && !receivedText) {
+    val trailingCalls = tools?.drain().orEmpty()
+    if (trailingCalls.isNotEmpty()) {
+        receivedToolCall = true
+        emit(ChatStreamChunk(toolCalls = trailingCalls))
+    }
+    var result = completion.result()
+    if (receivedToolCall && result.status == ChatCompletionStatus.COMPLETED) {
+        result = ChatCompletion(ChatCompletionStatus.TOOL_CALL_REQUIRED, result.finishReason)
+    }
+    if (result.status == ChatCompletionStatus.COMPLETED && !receivedText && !receivedToolCall) {
         throw ChatStreamException(ChatCompletion(ChatCompletionStatus.FAILED, result.finishReason), "Provider ended without a final assistant answer")
     }
     emit(ChatStreamChunk(completion = result))

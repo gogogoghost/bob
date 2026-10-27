@@ -649,9 +649,7 @@ private fun ChatContent(
                     val turns = remember(messages) { messages.toTurns() }
                     LazyColumn(
                         state = listState,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(horizontal = MaterialTheme.spacing.l),
+                        modifier = Modifier.fillMaxSize(),
                         verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.s),
                     ) {
                         items(
@@ -666,7 +664,10 @@ private fun ChatContent(
                             contentType = { if (it is ChatTurn.User) "user" else "group" },
                         ) { turn ->
                             when (turn) {
-                                is ChatTurn.User -> MessageRow(message = turn.message)
+                                is ChatTurn.User -> MessageRow(
+                                    message = turn.message,
+                                    modifier = Modifier.padding(horizontal = MaterialTheme.spacing.l),
+                                )
                                 is ChatTurn.AssistantGroup -> {
                                     turn.answer?.let { answer ->
                                         AssistantMessageRow(
@@ -722,9 +723,9 @@ private fun ChatContent(
 
 
 @Composable
-private fun MessageRow(message: ChatMessage) {
+private fun MessageRow(message: ChatMessage, modifier: Modifier = Modifier) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.End,
     ) {
         Surface(

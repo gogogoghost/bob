@@ -6,7 +6,7 @@
     <string name="web_search_entry_description">Choose the default and manage search services</string>
     <string name="web_search_off">Off</string>
     <string name="web_search_native">Model native search</string>
-    <string name="web_search_native_help">Native search requires a supported OpenAI model. External search uses the selected service, never native search.</string>
+    <string name="web_search_native_help">Native search requires a supported OpenAI model. External search is offered to the model as a web_search tool; the model decides when to search. It never falls back to native search.</string>
     <string name="web_search_missing_provider">Unavailable service</string>
     <string name="web_search_builtin_title">Search services</string>
     <string name="web_search_custom_title">Custom services</string>

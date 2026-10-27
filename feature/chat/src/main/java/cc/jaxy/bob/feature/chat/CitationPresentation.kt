@@ -14,7 +14,7 @@ data class ChatCitation(val index: String, val title: String, val url: String) {
 internal data class CitationPresentation(
     val markdown: String,
     val sources: List<ChatCitation>,
-    /** Subset of [sources] actually linked from [markdown], in first-use order. */
+    /** Linked sources in first-use order, renumbered from 1 for display. */
     val usedSources: List<ChatCitation> = sources,
 )
 
@@ -203,7 +203,11 @@ private fun withUsed(markdown: String, sources: List<ChatCitation>): CitationPre
     val ordered = linkedUrls(cleaned)
     if (ordered.isEmpty()) return CitationPresentation(markdown, sources, emptyList())
     val byUrl = sources.associateBy { it.url }
-    return CitationPresentation(cleaned, sources, ordered.mapNotNull { byUrl[it] })
+    // Only linked sources become cards. Renumber after filtering so the cards
+    // always read 1..n instead of showing gaps for uncited search hits.
+    val used = ordered.mapNotNull { byUrl[it] }
+        .mapIndexed { position, citation -> citation.copy(index = (position + 1).toString()) }
+    return CitationPresentation(cleaned, sources, used)
 }
 
 /** URLs linked from the rendered markdown (`[🔗](<url>)` / `[🔗](url)`), in first-use order. */

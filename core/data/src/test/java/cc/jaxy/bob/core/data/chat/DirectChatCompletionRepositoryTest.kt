@@ -228,9 +228,22 @@ data: {"type":"message_stop"}
         val paths = AtomicReference<List<String>>(emptyList())
         val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
         server.createContext("/") { exchange ->
-            paths.updateAndGet { it + exchange.requestURI.path }
-            exchange.sendResponseHeaders(403, -1)
-            exchange.close()
+            val path = exchange.requestURI.path
+            paths.updateAndGet { it + path }
+            if (path.endsWith("/chat/completions")) {
+                val body = """data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"web_search","arguments":"{\"query\":\"Latest news\"}"}}]},"finish_reason":"tool_calls"}]}
+
+data: [DONE]
+
+"""
+                val bytes = body.toByteArray(StandardCharsets.UTF_8)
+                exchange.responseHeaders.add("Content-Type", "text/event-stream")
+                exchange.sendResponseHeaders(200, bytes.size.toLong())
+                exchange.responseBody.use { it.write(bytes) }
+            } else {
+                exchange.sendResponseHeaders(403, -1)
+                exchange.close()
+            }
         }
         server.start()
         try {
@@ -249,7 +262,7 @@ data: {"type":"message_stop"}
             assertTrue(failure is ChatStreamException)
             assertEquals(ChatCompletionStatus.FAILED, (failure as ChatStreamException).completion.status)
             assertEquals(listOf(WebSearchStage.SEARCHING, WebSearchStage.FAILED), chunks.mapNotNull { it.searchActivity?.stage })
-            assertEquals(listOf("/search"), paths.get())
+            assertEquals(listOf("/v1/chat/completions", "/search"), paths.get())
         } finally {
             server.stop(0)
         }

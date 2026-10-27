@@ -9,6 +9,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -78,6 +79,9 @@ fun AssistantMessageRow(
     onRetry: (() -> Unit)? = null,
 ) {
     val spacing = MaterialTheme.spacing
+    // The list is full-bleed so the citation strip can scroll to the screen
+    // edges; every other block re-applies this gutter to stay aligned.
+    val gutter = spacing.l
     val body = streamingText ?: message.content
     val reasoning = streamingReasoning ?: message.reasoning
     val reasoningSecs = streamingReasoningSecs ?: message.reasoningDuration
@@ -106,6 +110,7 @@ fun AssistantMessageRow(
         verticalArrangement = Arrangement.spacedBy(spacing.xs),
     ) {
         Row(
+            modifier = Modifier.padding(horizontal = gutter),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(spacing.s),
         ) {
@@ -136,6 +141,7 @@ fun AssistantMessageRow(
             (isStreaming && body.isBlank() && !searching)
         if (showThinking) {
             ThinkingCard(
+                modifier = Modifier.padding(horizontal = gutter),
                 content = reasoning.orEmpty(),
                 thinking = isStreaming && body.isBlank(),
                 durationSecs = reasoningSecs,
@@ -158,26 +164,36 @@ fun AssistantMessageRow(
                     }
                 },
             ) {
-                MarkdownText(markdown = presentation.markdown, streaming = isStreaming)
+                MarkdownText(
+                    markdown = presentation.markdown,
+                    modifier = Modifier.padding(horizontal = gutter),
+                    streaming = isStreaming,
+                )
             }
-            if (isStreaming) StreamingCursor()
+            if (isStreaming) StreamingCursor(Modifier.padding(horizontal = gutter))
         } else if (!isStreaming && completionText == null && searchActivity == null && citations.isEmpty()) {
             Text(
                 text = stringResource(R.string.chat_empty_message),
+                modifier = Modifier.padding(horizontal = gutter),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         } else if (isStreaming && reasoning.isNullOrBlank() && searchActivity == null) {
             // Reasoning-only phase with nothing yet: show cursor alone.
-            StreamingCursor()
+            StreamingCursor(Modifier.padding(horizontal = gutter))
         }
         if (citations.isNotEmpty()) {
             Text(
                 text = stringResource(R.string.chat_web_search_sources),
+                modifier = Modifier.padding(horizontal = gutter),
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            CitationRow(citations = citations, onOpen = { linkPreview = it })
+            CitationRow(
+                citations = citations,
+                contentPadding = PaddingValues(horizontal = gutter),
+                onOpen = { linkPreview = it },
+            )
         }
         linkPreview?.let { citation ->
             LinkPreviewSheet(citation = citation, onDismiss = { linkPreview = null })
@@ -185,12 +201,14 @@ fun AssistantMessageRow(
         if (!isStreaming && completionText != null) {
             Text(
                 text = stringResource(completionText),
+                modifier = Modifier.padding(horizontal = gutter),
                 style = MaterialTheme.typography.bodySmall,
                 color = if (completionStatus == ChatCompletionStatus.STOPPED) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
             )
             message.completion?.finishReason?.takeIf(String::isNotBlank)?.let { reason ->
                 Text(
                     text = stringResource(R.string.chat_response_finish_reason, reason),
+                    modifier = Modifier.padding(horizontal = gutter),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -199,6 +217,7 @@ fun AssistantMessageRow(
         if (!message.error.isNullOrBlank()) {
             Text(
                 text = message.error!!,
+                modifier = Modifier.padding(horizontal = gutter),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.error,
             )
@@ -208,7 +227,12 @@ fun AssistantMessageRow(
                 completionStatus == ChatCompletionStatus.INTERRUPTED ||
                 completionStatus == ChatCompletionStatus.STOPPED ||
                 message.error?.isNotBlank() == true
-            MessageActions(text = body, showRetry = retryable && onRetry != null, onRetry = { onRetry?.invoke() })
+            MessageActions(
+                text = body,
+                modifier = Modifier.padding(horizontal = gutter),
+                showRetry = retryable && onRetry != null,
+                onRetry = { onRetry?.invoke() },
+            )
         }
     }
 }
@@ -473,16 +497,19 @@ fun parseCitations(markdown: String): List<ChatCitation> {
 fun CitationRow(
     citations: List<ChatCitation>,
     modifier: Modifier = Modifier,
+    contentPadding: PaddingValues = PaddingValues(),
     onOpen: (ChatCitation) -> Unit = {},
 ) {
     if (citations.isEmpty()) return
     val spacing = MaterialTheme.spacing
+    val ordered = remember(citations) { orderCitations(citations) }
     androidx.compose.foundation.lazy.LazyRow(
         horizontalArrangement = Arrangement.spacedBy(spacing.s),
+        contentPadding = contentPadding,
         modifier = modifier.fillMaxWidth(),
     ) {
-        items(citations.size, key = { citations[it].url }) { i ->
-            val citation = citations[i]
+        items(ordered.size, key = { ordered[it].url }) { i ->
+            val citation = ordered[i]
             Surface(
                 shape = RoundedCornerShape(10.dp),
                 color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
@@ -513,6 +540,10 @@ fun CitationRow(
         }
     }
 }
+
+/** Source cards follow their displayed numbers, not the order they were linked in the answer. */
+internal fun orderCitations(citations: List<ChatCitation>): List<ChatCitation> =
+    citations.sortedWith(compareBy { it.index.toIntOrNull() ?: Int.MAX_VALUE })
 
 /** Bottom preview for any tapped link: title, URL, host; jump on confirm. */
 @OptIn(ExperimentalMaterial3Api::class)

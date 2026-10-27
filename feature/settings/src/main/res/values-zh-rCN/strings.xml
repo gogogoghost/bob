@@ -5,7 +5,7 @@
     <string name="web_search_entry_description">选择默认方式并管理搜索服务</string>
     <string name="web_search_off">关闭</string>
     <string name="web_search_native">模型原生搜索</string>
-    <string name="web_search_native_help">原生搜索需要受支持的 OpenAI 模型。外部搜索仅使用选定的服务，不会转用原生搜索。</string>
+    <string name="web_search_native_help">内置搜索需要受支持的 OpenAI 模型。外部搜索会以 web_search 工具提供给模型，由模型决定何时搜索，且不会回退到内置搜索。</string>
     <string name="web_search_missing_provider">服务不可用</string>
     <string name="web_search_builtin_title">搜索服务</string>
     <string name="web_search_custom_title">自定义服务</string>

@@ -125,6 +125,30 @@ class CitationPresentationTest {
         }
     }
     @Test
+    fun `uncited search hits do not leave numbering gaps in source cards`() {
+        val first = "https://first.example/a"
+        val skipped = "https://skipped.example/b"
+        val third = "https://third.example/c"
+        val result = presentCitations(
+            "See [🔗]($first) and [🔗]($third).",
+            listOf(WebCitation(first, "First"), WebCitation(skipped, "Skipped"), WebCitation(third, "Third")),
+        )
+        assertEquals(listOf(first, third), result.usedSources.map { it.url })
+        assertEquals(listOf("1", "2"), result.usedSources.map { it.index })
+    }
+
+    @Test
+    fun `source cards are ordered by their displayed numeric index`() {
+        val citations = listOf(
+            ChatCitation("3", "Third", "https://third.example"),
+            ChatCitation("", "Unnumbered", "https://unnumbered.example"),
+            ChatCitation("1", "First", "https://first.example"),
+            ChatCitation("2", "Second", "https://second.example"),
+        )
+        assertEquals(listOf("1", "2", "3", ""), orderCitations(citations).map { it.index })
+    }
+
+    @Test
     fun `bare emoji urls fold only for known sources`() {
         val first = "https://first.example/a"
         val citations = listOf(WebCitation(first, "First"))

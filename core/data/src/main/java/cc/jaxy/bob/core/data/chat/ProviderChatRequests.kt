@@ -28,6 +28,7 @@ internal class ProviderChatRequests(private val files: FileRepository? = null, p
         reasoning: Map<String, String> = emptyMap(),
         maxOutput: Int? = null,
         webSearchEnabled: Boolean = false,
+        toolSearch: Boolean = false,
     ): PreparedChatRequest {
         if (webSearchEnabled) requireWebSearchSupport(providerId, source, modelId, reasoning)
         val builtin = source != "custom"
@@ -49,8 +50,17 @@ internal class ProviderChatRequests(private val files: FileRepository? = null, p
             ((id == "deepseek" || model.startsWith("deepseek-")) && thinkingEnabled)
         val canonicalMessages = ArrayList<JsonObject>(history.size + 1)
         if (systemPrompt.isNotBlank()) canonicalMessages += buildJsonObject { put("role", "system"); put("content", systemPrompt) }
+        val toolNames = HashMap<String, String>()
         for (message in history) {
             if (message.role == "system") continue
+            if (message.role == "tool") {
+                canonicalMessages += buildJsonObject {
+                    put("role", "tool")
+                    put("tool_call_id", message.toolCallId.orEmpty())
+                    put("content", message.content)
+                }
+                continue
+            }
             val parts = if (message.attachments.isEmpty()) null else ArrayList<JsonElement>(message.attachments.size + 1).apply {
                 if (message.content.isNotEmpty()) add(buildJsonObject { put("type", "text"); put("text", message.content) })
                 for (attachment in message.attachments) {
@@ -61,9 +71,24 @@ internal class ProviderChatRequests(private val files: FileRepository? = null, p
             }
             canonicalMessages += buildJsonObject {
                 put("role", if (message.role == "assistant") "assistant" else "user")
-                if (parts == null) put("content", if (kimi && message.content.isEmpty()) " " else message.content)
+                if (parts == null) put("content", if (kimi && message.content.isEmpty() && message.toolCalls.isEmpty()) " " else message.content)
                 else put("content", JsonArray(parts))
                 if (message.role == "assistant" && replayReasoning) put("reasoning_content", message.reasoning?.takeIf(String::isNotBlank) ?: " ")
+                if (message.toolCalls.isNotEmpty()) {
+                    putJsonArray("tool_calls") {
+                        message.toolCalls.forEach { call ->
+                            toolNames[call.id] = call.name
+                            add(buildJsonObject {
+                                put("id", call.id)
+                                put("type", "function")
+                                putJsonObject("function") {
+                                    put("name", call.name)
+                                    put("arguments", call.arguments)
+                                }
+                            })
+                        }
+                    }
+                }
             }
         }
         val messages = JsonArray(canonicalMessages)
@@ -76,8 +101,12 @@ internal class ProviderChatRequests(private val files: FileRepository? = null, p
             // Cloud adapters consume the same canonical message representation.
             maxOutput?.takeIf { it > 0 }?.let { put("max_tokens", it) }
             effort?.let { put("reasoning_effort", it) }
+            if (toolSearch) putJsonArray("tools") { add(openAiWebSearchTool()) }
         }
-        if (builtin) cloud.prepare(id, config, modelId, body)?.let { return it }
+        if (builtin) cloud.prepare(id, config, modelId, body)?.let {
+            require(!toolSearch || it.protocol in TOOL_PROTOCOLS) { UNSUPPORTED_TOOL_SEARCH }
+            return it.copy(toolSearch = toolSearch)
+        }
         var base = (config["baseURL"]?.takeIf(String::isNotBlank) ?: providerDefaultEndpoint(id))
             ?.trim()?.trimEnd('/') ?: error("Provider endpoint is not configured")
         var protocol = when (adapter) {
@@ -120,6 +149,7 @@ internal class ProviderChatRequests(private val files: FileRepository? = null, p
             val path = when (model) { "spark-x2-flash" -> "/agent/v1"; "spark-x2" -> "/x2"; "spark-x1.5" -> "/v2"; else -> "/v1" }
             base = "https://spark-api-open.xf-yun.com$path"
         }
+        if (toolSearch) require(protocol in TOOL_PROTOCOLS) { UNSUPPORTED_TOOL_SEARCH }
         val key = config["apiKey"].orEmpty()
         val headers = mutableMapOf("User-Agent" to "BobAndroid/0.1.0", "Accept" to "text/event-stream, application/json")
         if (key.isNotBlank()) headers["Authorization"] = "Bearer $key"
@@ -173,6 +203,7 @@ internal class ProviderChatRequests(private val files: FileRepository? = null, p
                 payload = buildJsonObject {
                     put("model", modelId); put("max_tokens", limit); put("stream", stream)
                     if (systemPrompt.isNotBlank()) put("system", systemPrompt)
+                    if (toolSearch) putJsonArray("tools") { add(anthropicWebSearchTool()) }
                     val chatMessages = anthropicMessages(messages, forceThinking && (nativeKimi || thinkingEnabled))
                     put("messages", if (MODERN_CLAUDE.containsMatchIn(model)) JsonArray(chatMessages.dropLastWhile { it.jsonObject.string("role") == "assistant" }) else chatMessages)
                     if (forceThinking) {
@@ -209,11 +240,27 @@ internal class ProviderChatRequests(private val files: FileRepository? = null, p
             "ollama" -> {
                 payload = buildJsonObject {
                     put("model", modelId); put("stream", true)
+                    if (toolSearch) putJsonArray("tools") { add(openAiWebSearchTool()) }
                     putJsonArray("messages") {
                         messages.forEach { raw ->
                             val message = raw.jsonObject
+                            val role = message.string("role")
                             add(buildJsonObject {
-                                put("role", message.getValue("role")); put("content", contentText(message["content"]))
+                                put("role", role); put("content", contentText(message["content"]))
+                                toolNames[message.string("tool_call_id").orEmpty()]?.let { put("tool_name", it) }
+                                (message["tool_calls"] as? JsonArray)?.let { calls ->
+                                    putJsonArray("tool_calls") {
+                                        calls.forEach { element ->
+                                            val function = (element as? JsonObject)?.get("function") as? JsonObject ?: return@forEach
+                                            add(buildJsonObject {
+                                                putJsonObject("function") {
+                                                    put("name", function.string("name").orEmpty())
+                                                    put("arguments", toolInput(function.string("arguments").orEmpty()))
+                                                }
+                                            })
+                                        }
+                                    }
+                                }
                                 val images = imageParts(message["content"])
                                 if (images.isNotEmpty()) putJsonArray("images") { images.forEach { add(JsonPrimitive(it.substringAfter("base64,"))) } }
                             })
@@ -237,11 +284,12 @@ internal class ProviderChatRequests(private val files: FileRepository? = null, p
                 payload = buildJsonObject {
                     put("model", modelId); put("stream", stream); put("store", false)
                     if (webSearchEnabled) putJsonArray("tools") { add(buildJsonObject { put("type", "web_search") }) }
+                    if (toolSearch) putJsonArray("tools") { add(responsesWebSearchTool()) }
                     if (id != "chatgpt") body["max_tokens"]?.let { put("max_output_tokens", it) }
                     if (systemPrompt.isNotBlank() && !lite) put("instructions", systemPrompt)
                     putJsonArray("input") {
                         if (lite) {
-                            add(buildJsonObject { put("role", "developer"); put("type", "additional_tools"); putJsonArray("tools") {} })
+                            add(buildJsonObject { put("role", "developer"); put("type", "additional_tools"); putJsonArray("tools") { if (toolSearch) add(responsesWebSearchTool()) } })
                             if (systemPrompt.isNotBlank()) add(buildJsonObject { put("role", "developer"); put("type", "message"); putJsonArray("content") { add(buildJsonObject { put("type", "input_text"); put("text", systemPrompt) }) } })
                         }
                         val originalMessages = history.filter { it.role != "system" }.iterator()
@@ -256,14 +304,33 @@ internal class ProviderChatRequests(private val files: FileRepository? = null, p
                                     }
                                 }
                             }
-                            if (role != "system") add(buildJsonObject {
-                                put("role", role); put("type", "message")
-                                putJsonArray("content") {
-                                    val text = contentText(message["content"])
-                                    if (text.isNotEmpty()) add(buildJsonObject { put("type", if (role == "assistant") "output_text" else "input_text"); put("text", text) })
-                                    imageParts(message["content"]).forEach { data -> add(buildJsonObject { put("type", "input_image"); put("image_url", data) }) }
+                            if (role == "tool") {
+                                add(buildJsonObject {
+                                    put("type", "function_call_output")
+                                    put("call_id", message.string("tool_call_id").orEmpty())
+                                    put("output", contentText(message["content"]))
+                                })
+                            } else if (role != "system") {
+                                (message["tool_calls"] as? JsonArray)?.forEach { element ->
+                                    val call = element as? JsonObject ?: return@forEach
+                                    val function = call["function"] as? JsonObject ?: return@forEach
+                                    add(buildJsonObject {
+                                        put("type", "function_call")
+                                        put("call_id", call.string("id").orEmpty())
+                                        put("name", function.string("name").orEmpty())
+                                        put("arguments", function.string("arguments").orEmpty().ifBlank { "{}" })
+                                    })
                                 }
-                            })
+                                val text = contentText(message["content"])
+                                val images = imageParts(message["content"])
+                                if (text.isNotEmpty() || images.isNotEmpty()) add(buildJsonObject {
+                                    put("role", role); put("type", "message")
+                                    putJsonArray("content") {
+                                        if (text.isNotEmpty()) add(buildJsonObject { put("type", if (role == "assistant") "output_text" else "input_text"); put("text", text) })
+                                        images.forEach { data -> add(buildJsonObject { put("type", "input_image"); put("image_url", data) }) }
+                                    }
+                                })
+                            }
                         }
                     }
                     if (effort != null || lite || isOpenAiReasoning(model)) putJsonObject("reasoning") {
@@ -330,13 +397,13 @@ internal class ProviderChatRequests(private val files: FileRepository? = null, p
                 url = apiPath(base, "chat/completions", id)
                 if (id == "spark" && !config["deploymentName"].isNullOrBlank()) {
                     // Spark deployments can use aliases independent of the selected endpoint family.
-                    return PreparedChatRequest(Request.Builder().url(url).post(JsonObject(payload + ("model" to JsonPrimitive(config.getValue("deploymentName")))).toString().toRequestBody("application/json".toMediaType())).apply { headers.forEach { (name, value) -> header(name, value) } }.build(), protocol)
+                    return PreparedChatRequest(Request.Builder().url(url).post(JsonObject(payload + ("model" to JsonPrimitive(config.getValue("deploymentName")))).toString().toRequestBody("application/json".toMediaType())).apply { headers.forEach { (name, value) -> header(name, value) } }.build(), protocol, webSearchEnabled, toolSearch)
                 }
             }
         }
         val request = Request.Builder().url(url).post(payload.toString().toRequestBody("application/json".toMediaType()))
         headers.forEach { (name, value) -> request.header(name, value) }
-        return PreparedChatRequest(request.build(), protocol, webSearchEnabled)
+        return PreparedChatRequest(request.build(), protocol, webSearchEnabled, toolSearch)
     }
 
     private suspend fun readAttachment(uri: String): ByteArray {
@@ -366,22 +433,55 @@ private fun contentText(content: JsonElement?): String = when (content) {
 private fun imageParts(content: JsonElement?): List<String> = (content as? JsonArray)?.mapNotNull {
     ((it as? JsonObject)?.get("image_url") as? JsonObject)?.get("url")?.jsonPrimitive?.contentOrNull
 }.orEmpty()
-private fun anthropicMessages(messages: JsonArray, thinking: Boolean): JsonArray = buildJsonArray {
+private fun anthropicMessages(messages: JsonArray, thinking: Boolean): JsonArray {
+    val result = ArrayList<JsonObject>(messages.size)
     for (raw in messages) {
         val message = raw.jsonObject
-        if (message.string("role") == "system") continue
-        add(buildJsonObject {
-            put("role", message.getValue("role"))
+        val role = message.string("role")
+        if (role == "system") continue
+        if (role == "tool") {
+            val block = buildJsonObject {
+                put("type", "tool_result")
+                put("tool_use_id", message.string("tool_call_id").orEmpty())
+                put("content", contentText(message["content"]))
+            }
+            val previous = result.lastOrNull()
+            val previousContent = previous?.get("content") as? JsonArray
+            if (previous != null && previous.string("role") == "user" &&
+                previousContent != null && previousContent.all { (it as? JsonObject)?.string("type") == "tool_result" }) {
+                result[result.lastIndex] = JsonObject(previous + ("content" to JsonArray(previousContent + block)))
+            } else {
+                result += buildJsonObject {
+                    put("role", "user")
+                    put("content", JsonArray(listOf(block)))
+                }
+            }
+            continue
+        }
+        val assistant = role == "assistant"
+        result += buildJsonObject {
+            put("role", role)
             putJsonArray("content") {
-                if (thinking && message.string("role") == "assistant") add(buildJsonObject { put("type", "thinking"); put("thinking", message.string("reasoning_content").ifBlank { " " }) })
+                if (thinking && assistant) add(buildJsonObject { put("type", "thinking"); put("thinking", message.string("reasoning_content").ifBlank { " " }) })
                 val text = contentText(message["content"])
                 if (text.isNotEmpty()) add(buildJsonObject { put("type", "text"); put("text", text) })
                 imageParts(message["content"]).forEach { data ->
                     add(buildJsonObject { put("type", "image"); putJsonObject("source") { put("type", "base64"); put("media_type", data.substringAfter("data:").substringBefore(';')); put("data", data.substringAfter("base64,")) } })
                 }
+                if (assistant) (message["tool_calls"] as? JsonArray)?.forEach { element ->
+                    val call = element as? JsonObject ?: return@forEach
+                    val function = call["function"] as? JsonObject ?: return@forEach
+                    add(buildJsonObject {
+                        put("type", "tool_use")
+                        put("id", call.string("id").orEmpty())
+                        put("name", function.string("name").orEmpty())
+                        put("input", toolInput(function.string("arguments").orEmpty()))
+                    })
+                }
             }
-        })
+        }
     }
+    return JsonArray(result)
 }
 internal fun isOpenAiReasoning(model: String): Boolean = OPENAI_REASONING_MODEL.containsMatchIn(model)
 internal fun usesResponses(model: String): Boolean {
@@ -407,6 +507,10 @@ private val OPENAI_CHAT_ONLY_MODEL = Regex("^o1-(?:mini|preview)|-chat(?:-|$)|au
 private val ENCRYPTED_RESPONSES_PROVIDERS = setOf("openai", "chatgpt", "xai", "supergrok", "meta")
 private val OPENAI_REASONING_MODEL = Regex("^(?:gpt-[5-9](?:\\b|[.-])|o[134](?:$|-)|codex|computer-use)")
 private val GPT_RESPONSES_MODEL = Regex("^gpt-([5-9])(?:\\.(\\d+))?(?:$|-)")
+private val TOOL_PROTOCOLS = setOf("openai", "responses", "anthropic", "gemini", "ollama", "bedrock")
+private const val UNSUPPORTED_TOOL_SEARCH =
+    "External web search now runs as a model tool, but this model route cannot call tools. Choose an OpenAI-compatible, " +
+        "Anthropic, Gemini, Ollama, or Bedrock chat model, or turn web search off."
 
 // Messages APIs require an explicit budget even for a remotely discovered model without catalog limits.
 internal const val DEFAULT_ANTHROPIC_OUTPUT_TOKENS = 8192
