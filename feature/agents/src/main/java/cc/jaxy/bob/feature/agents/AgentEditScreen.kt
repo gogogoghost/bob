@@ -9,8 +9,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.selectable
-import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -28,7 +26,6 @@ import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -45,7 +42,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -60,11 +56,11 @@ import cc.jaxy.bob.core.designsystem.component.AvatarImage
 import cc.jaxy.bob.core.designsystem.component.AnTopBar
 import cc.jaxy.bob.core.designsystem.component.ErrorBox
 import cc.jaxy.bob.core.designsystem.component.InitialAvatar
-import cc.jaxy.bob.core.designsystem.component.SearchProviderIcon
 import cc.jaxy.bob.core.designsystem.component.SectionTitle
 import cc.jaxy.bob.core.designsystem.component.SkeletonList
 import cc.jaxy.bob.core.designsystem.text.resolve
 import cc.jaxy.bob.core.designsystem.theme.spacing
+import cc.jaxy.bob.feature.models.WebSearchPickerDialog
 import cc.jaxy.bob.core.designsystem.theme.inputRowContainer
 import cc.jaxy.bob.core.designsystem.R as DsR
 
@@ -441,10 +437,13 @@ private fun AgentWebSearchSelector(
     onManage: () -> Unit,
 ) {
     var open by remember { mutableStateOf(false) }
+    val spacing = MaterialTheme.spacing
     val nativeSupported = supportsWebSearch(state.provider, state.model)
     val selected = state.searchProviders.find { it.id == state.webSearch.providerId }
     val unavailable = state.webSearch.mode == WebSearchMode.PROVIDER && selected?.enabled != true
-    val label = when (state.webSearch.mode) {
+    val label = if (state.purePrompt) {
+        stringResource(R.string.agents_web_search_disable)
+    } else when (state.webSearch.mode) {
         WebSearchMode.OFF -> stringResource(R.string.agents_web_search_disable)
         WebSearchMode.NATIVE -> stringResource(R.string.agents_web_search_native)
         WebSearchMode.PROVIDER -> selected?.name ?: state.webSearch.providerId.orEmpty()
@@ -474,51 +473,18 @@ private fun AgentWebSearchSelector(
     )
     }
     if (open) {
-        AlertDialog(
-            onDismissRequest = { open = false },
-            title = { Text(stringResource(R.string.agents_edit_section_web_search)) },
-            text = {
-                Column(Modifier.verticalScroll(rememberScrollState()).selectableGroup()) {
-                    val options = listOf(
-                        WebSearchPolicy() to stringResource(R.string.agents_web_search_disable),
-                        WebSearchPolicy(WebSearchMode.NATIVE) to stringResource(R.string.agents_web_search_native),
-                    ) + state.searchProviders.filter { it.enabled }.map {
-                        WebSearchPolicy(WebSearchMode.PROVIDER, it.id) to it.name
-                    } + if (unavailable) listOf(state.webSearch to label) else emptyList()
-                    options.forEach { (policy, title) ->
-                        val optionProvider = state.searchProviders.firstOrNull { it.id == policy.providerId }
-                            ?: state.webSearch.takeIf { it.mode == WebSearchMode.PROVIDER && it.providerId == policy.providerId }
-                                ?.let { cc.jaxy.bob.core.data.search.WebSearchProvider(it.providerId!!, title, cc.jaxy.bob.core.data.search.WebSearchProtocol.SEARXNG, "", enabled = false) }
-                        val enabled = when {
-                            policy.mode == WebSearchMode.NATIVE -> nativeSupported
-                            policy.mode == WebSearchMode.PROVIDER -> state.searchProviders.any { it.id == policy.providerId && it.enabled }
-                            else -> true
-                        }
-                        ListItem(
-                            colors = androidx.compose.material3.ListItemDefaults.colors(
-                                containerColor = androidx.compose.ui.graphics.Color.Transparent),
-                            headlineContent = { Text(title) },
-                            supportingContent = if (!enabled) ({ Text(stringResource(
-                                if (policy.mode == WebSearchMode.NATIVE) R.string.agents_web_search_native_unavailable
-                                else R.string.agents_web_search_unavailable,
-                            )) }) else null,
-                            leadingContent = {
-                                if (policy.mode == WebSearchMode.PROVIDER) {
-                                    SearchProviderIcon(providerId = optionProvider?.id, name = title, builtin = (optionProvider?.builtin == true), size = 32.dp)
-                                } else {
-                                    RadioButton(selected = state.webSearch == policy, onClick = null, enabled = enabled)
-                                }
-                            },
-                            modifier = Modifier.selectable(selected = state.webSearch == policy, enabled = enabled, role = Role.RadioButton) {
-                                onChange(policy)
-                                open = false
-                            },
-                        )
-                    }
-                }
+        WebSearchPickerDialog(
+            policy = state.webSearch,
+            providers = state.searchProviders,
+            providersError = state.providersError,
+            nativeSupported = nativeSupported,
+            nativeModel = state.model.takeIf { it.isNotBlank() }?.let {
+                AIModel(id = it, providerId = state.provider, displayName = it)
             },
-            confirmButton = { TextButton(onClick = { open = false; onManage() }) { Text(stringResource(R.string.agents_web_search_manage)) } },
-            dismissButton = { TextButton(onClick = { open = false }) { Text(stringResource(DsR.string.common_cancel)) } },
+            purePrompt = state.purePrompt,
+            onSelect = { onChange(it); open = false },
+            onManage = { open = false; onManage() },
+            onDismiss = { open = false },
         )
     }
 }

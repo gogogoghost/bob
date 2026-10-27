@@ -121,6 +121,7 @@ class ProviderCredentialPersistenceTest {
                 "provider" -> rows[args?.firstOrNull() as String]
                 "providers" -> rows.values.toList()
                 "models" -> emptyList<cc.jaxy.bob.core.data.local.ModelRow>()
+                "modelsFor" -> emptyList<cc.jaxy.bob.core.data.local.ModelRow>()
                 "putModels" -> Unit
                 "putProvider" -> {
                     val row = args?.firstOrNull() as ProviderRow

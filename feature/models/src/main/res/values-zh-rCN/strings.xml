@@ -31,4 +31,13 @@
     <string name="models_detail_saving">保存中…</string>
     <string name="models_detail_saved">已保存</string>
     <string name="models_detail_failed">保存失败</string>
+    <string name="web_search_picker_title">联网搜索</string>
+    <string name="web_search_picker_disable">禁用</string>
+    <string name="web_search_picker_native">模型原生</string>
+    <string name="web_search_picker_native_unavailable">当前模型不支持 Model Native，请尝试其他模型。</string>
+    <string name="web_search_picker_provider_unavailable">所选搜索服务不可用，请检查联网搜索设置。</string>
+    <string name="web_search_picker_pure_prompt_hint">此智能体已关闭内置提示词（Pure prompt），因此联网搜索被自动禁用。</string>
+    <string name="web_search_picker_settings_error">无法读取联网搜索设置，请重试。</string>
+    <string name="web_search_picker_manage">管理服务</string>
+    <string name="web_search_picker_close">关闭</string>
 </resources>

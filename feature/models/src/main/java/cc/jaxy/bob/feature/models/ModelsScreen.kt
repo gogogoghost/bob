@@ -2,6 +2,7 @@ package cc.jaxy.bob.feature.models
 
 import android.content.res.Configuration
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -11,6 +12,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -269,9 +271,9 @@ private fun ModelsContent(
     }
 }
 
-internal data class AbilityBadge(val icon: ImageVector, val labelRes: Int, val enabled: Boolean)
+data class AbilityBadge(val icon: ImageVector, val labelRes: Int, val enabled: Boolean)
 
-internal fun abilityBadges(abilities: ModelAbilities): List<AbilityBadge> = listOf(
+fun abilityBadges(abilities: ModelAbilities): List<AbilityBadge> = listOf(
     AbilityBadge(Icons.Filled.Visibility, R.string.models_ability_vision, abilities.vision),
     AbilityBadge(Icons.Filled.Psychology, R.string.models_ability_reasoning, abilities.reasoning),
     AbilityBadge(Icons.Filled.Build, R.string.models_ability_tools, abilities.functionCall),
@@ -285,29 +287,45 @@ internal fun abilityBadges(abilities: ModelAbilities): List<AbilityBadge> = list
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-internal fun AbilityChips(badges: List<AbilityBadge>, modifier: Modifier = Modifier) {
+fun AbilityChips(badges: List<AbilityBadge>, modifier: Modifier = Modifier) {
     if (badges.isEmpty()) return
     FlowRow(
-        modifier = modifier,
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         badges.forEach { badge ->
-            AssistChip(
-                onClick = {},
-                label = { Text(badge.labelRes.let { stringResource(it) }, style = MaterialTheme.typography.labelSmall) },
-                leadingIcon = { Icon(badge.icon, contentDescription = null, modifier = Modifier.height(14.dp)) },
-                modifier = Modifier.height(28.dp),
+            // Compact enough that the common Reasoning/Tools/JSON trio fits on
+            // one line; FlowRow still wraps only when the width is exhausted.
+            Surface(
                 shape = MaterialTheme.shapes.small,
-                colors = AssistChipDefaults.assistChipColors(),
-                border = AssistChipDefaults.assistChipBorder(enabled = false),
-                enabled = false,
-            )
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
+            ) {
+                Row(
+                    modifier = Modifier.height(24.dp).padding(horizontal = 3.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    Icon(
+                        imageVector = badge.icon,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(11.dp),
+                    )
+                    Text(
+                        text = stringResource(badge.labelRes),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                    )
+                }
+            }
         }
     }
 }
 
-internal fun formatTokens(tokens: Int): String = when {
+fun formatTokens(tokens: Int): String = when {
     tokens >= 1_000_000 -> {
         val v = tokens / 1_000_000.0
         (if (v % 1.0 == 0.0) v.toInt().toString() else "%.1f".format(v)) + "M"

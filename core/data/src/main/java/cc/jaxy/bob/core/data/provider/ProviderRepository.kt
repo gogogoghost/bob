@@ -16,6 +16,9 @@ import cc.jaxy.bob.core.data.local.ACTIVATION_DEFAULTS_VERSION_KEY
 import cc.jaxy.bob.core.data.local.LocalDao
 import cc.jaxy.bob.core.data.local.ModelRow
 import cc.jaxy.bob.core.data.local.ProviderRow
+import cc.jaxy.bob.core.data.model.finalizeModelMetadata
+import cc.jaxy.bob.core.data.model.inferredModelMetadata
+import cc.jaxy.bob.core.data.model.mergeModelMetadata
 import java.io.IOException
 import java.util.UUID
 import javax.inject.Inject
@@ -195,7 +198,10 @@ class ProviderRepositoryImpl @Inject constructor(private val dao: LocalDao, priv
             chatSupported = supportsChat(row, stored),
             showChecker = supportsChat(row, stored) && (stored["__catalogShowChecker"]?.toBoolean() ?: spec.showChecker),
             showModelFetcher = supportsChat(row, stored) && (row.source == "custom" || id !in NO_MODEL_LISTING),
-            modelCount = stored["__catalogModelCount"]?.toIntOrNull() ?: 0,
+            // Fetched models live in Room; the bundled count is only a fallback
+            // for providers whose catalogue has not been materialized yet.
+            modelCount = dao.modelsFor(id).size.takeIf { it > 0 }
+                ?: stored["__catalogModelCount"]?.toIntOrNull() ?: 0,
         )
     }
     override suspend fun updateConfig(id: String, keyVaults: Map<String, String?>, checkModel: String?): AnResult<Unit> = credentialAction(id) {
@@ -248,41 +254,60 @@ class ProviderRepositoryImpl @Inject constructor(private val dao: LocalDao, priv
             "This provider does not expose a model-list API; choose a catalog model and check connectivity instead"
         }
         val cloudModels = if (row.source == "custom") null else cloud.modelIds(providerId, config)
-        val models = cloudModels ?: run {
+        val models = cloudModels?.map { RemoteModelDescriptor(it) } ?: run {
             require(sdkType in DISCOVERY_ADAPTER_TYPES) {
                 "Model listing is unavailable with these credentials; choose a catalog model and check connectivity instead"
             }
-            discoverModelIds(providerId, sdkType, config, row.source == "custom")
+            discoverModels(providerId, sdkType, config, row.source == "custom")
         }
-        val distinctModels = models.distinct()
-        distinctModels.forEach { id ->
+        val distinctModels = models.associateBy { it.id }.values.toList()
+        distinctModels.forEach { remote ->
+            val id = remote.id
             val old = dao.model(providerId, id)
-            val metadata = old?.metadata?.takeIf { it != "{}" }?.let {
+            val oldMetadata = old?.metadata?.takeIf { it != "{}" }?.let {
                 runCatching { json.decodeFromString<JsonObject>(it) }.getOrNull()
-            } ?: JsonObject(mapOf("type" to JsonPrimitive("chat")))
+            } ?: JsonObject(emptyMap())
+            // Listing data is freshest; then the same provider's saved catalogue,
+            // then a cross-catalogue/reference match, then conservative ID inference.
+            val inferred = inferredModelMetadata(id)
+            val metadata = finalizeModelMetadata(
+                mergeModelMetadata(
+                    remote.metadata,
+                    oldMetadata,
+                    seeder.referenceModelMetadata(id, providerId),
+                    inferred,
+                ),
+                stored = oldMetadata,
+                inferred = inferred,
+                providerGeneration = remote.metadata["generation"],
+            )
+            val type = (metadata["type"] as? JsonPrimitive)?.contentOrNull
+            val chatSupported = type == null || type in CHAT_MODEL_TYPES
+            val displayName = old?.displayName?.takeIf { it.isNotBlank() && it != old.id }
+                ?: (metadata["displayName"] as? JsonPrimitive)?.contentOrNull?.takeIf(String::isNotBlank)
+                ?: id
             val stampedMetadata = JsonObject(
-                metadata + ("chatSupported" to JsonPrimitive(
-                    (metadata["type"] as? JsonPrimitive)?.contentOrNull.let { it == null || it == "chat" },
-                )) + (ACTIVATION_DEFAULTS_VERSION_KEY to JsonPrimitive(ACTIVATION_DEFAULTS_VERSION)),
+                metadata + ("chatSupported" to JsonPrimitive(chatSupported)) +
+                    (ACTIVATION_DEFAULTS_VERSION_KEY to JsonPrimitive(ACTIVATION_DEFAULTS_VERSION)),
             )
             dao.putModel(
                 ModelRow(
                     id = id,
                     providerId = providerId,
-                    displayName = old?.displayName ?: id,
+                    displayName = displayName,
                     enabled = old?.enabled ?: false,
                     metadata = json.encodeToString(stampedMetadata),
                 ),
             )
         }
-        AnResult.Ok(distinctModels)
+        AnResult.Ok(distinctModels.map { it.id })
     } catch (e: CancellationException) { throw e } catch (e: Exception) { AnResult.Err(AnError("PROVIDER", e.message ?: "Unable to fetch models", e)) }
-    private suspend fun discoverModelIds(
+    private suspend fun discoverModels(
         providerId: String,
         sdkType: String,
         config: Map<String, String>,
         custom: Boolean,
-    ): List<String> {
+    ): List<RemoteModelDescriptor> {
         val base = config["baseURL"]?.trim()?.trimEnd('/')?.takeIf(String::isNotBlank)
             ?: error("Configure the provider endpoint first")
         val key = config["apiKey"].orEmpty()
@@ -318,7 +343,7 @@ class ProviderRepositoryImpl @Inject constructor(private val dao: LocalDao, priv
             "newapi" -> builder.header("X-Client", "LobeHub")
             "xiaomimimo" -> builder.removeHeader("Authorization").header("api-key", key)
         }
-        val result = mutableListOf<String>()
+        val result = mutableListOf<RemoteModelDescriptor>()
         val seenPages = mutableSetOf<String>()
         var request = builder.build()
         while (seenPages.add(request.url.toString())) {
@@ -358,7 +383,7 @@ class ProviderRepositoryImpl @Inject constructor(private val dao: LocalDao, priv
                     else -> (model["id"] as? JsonPrimitive)?.contentOrNull
                 }
                 if ((id == "opencodecodingplan" || id == "opencodezen") && modelId?.startsWith("jev-") == true) return@forEach
-                modelId?.takeIf(String::isNotBlank)?.let(result::add)
+                modelId?.takeIf(String::isNotBlank)?.let { result += remoteModelDescriptor(model, it) }
             }
             val next = when (sdkType) {
                 "google" -> (page?.get("nextPageToken") as? JsonPrimitive)?.contentOrNull?.takeIf(String::isNotBlank)?.let {
@@ -373,7 +398,7 @@ class ProviderRepositoryImpl @Inject constructor(private val dao: LocalDao, priv
             } ?: break
             request = request.newBuilder().url(next).build()
         }
-        return result.distinct()
+        return result.distinctBy { it.id }
     }
 
     private suspend fun fetchBody(request: Request): String = suspendCancellableCoroutine { continuation ->

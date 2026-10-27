@@ -192,11 +192,12 @@
     <string name="provider_models_search_empty">没有匹配的模型</string>
     <string name="provider_id_chat_unavailable">%1$s · 尚未实现本地对话适配器</string>
     <string name="provider_detail_chat_unsupported">已在本地收录供应商和模型目录，但应用尚未实现该供应商的直接对话适配器。</string>
-    <string name="provider_detail_models_count">内置模型：%1$d</string>
+    <string name="provider_detail_models_count">%1$d 个模型</string>
     <string name="provider_detail_api_key_url">API 密钥页面</string>
     <string name="provider_detail_models_url">模型文档</string>
     <string name="provider_detail_website">供应商网站</string>
     <string name="provider_model_no_chat_adapter">仅为目录条目；未实现本地对话适配器</string>
+    <string name="provider_model_details">模型详情</string>
 
     <string name="web_search_test">测试搜索</string>
     <string name="web_search_testing">测试中…</string>

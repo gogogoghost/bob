@@ -5,6 +5,7 @@ import cc.jaxy.bob.core.data.local.CatalogSeeder
 import cc.jaxy.bob.core.data.local.LocalDao
 import cc.jaxy.bob.core.data.local.ModelRow
 import cc.jaxy.bob.core.data.local.ProviderRow
+import cc.jaxy.bob.core.data.chat.ModelRepositoryImpl
 import com.sun.net.httpserver.HttpServer
 import java.net.InetSocketAddress
 import java.nio.charset.StandardCharsets
@@ -13,6 +14,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -70,6 +72,65 @@ class ProviderRemoteModelDiscoveryTest {
                 Json.parseToJsonElement(models.getValue(providerId to "beta").metadata)
                     .jsonObject.getValue("type").jsonPrimitive.content,
             )
+        } finally {
+            server.stop(0)
+        }
+    }
+
+
+    @Test
+    fun `fetched IDs gain catalogue metadata and update the provider model count`() = runBlocking {
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
+            createContext("/v1/models") { exchange ->
+                val body = """{"data":[{"id":"deepseek-v4.1-flash"}]}""".toByteArray()
+                exchange.responseHeaders.add("Content-Type", "application/json")
+                exchange.sendResponseHeaders(200, body.size.toLong())
+                exchange.responseBody.use { it.write(body) }
+            }
+            start()
+        }
+        try {
+            val providerId = "opencodecodingplan"
+            val baseUrl = "http://127.0.0.1:${server.address.port}/v1"
+            val providers = linkedMapOf(
+                providerId to ProviderRow(
+                    id = providerId,
+                    name = "OpenCode Go",
+                    source = "builtin",
+                    enabled = true,
+                    config = Json.encodeToString(mapOf("baseURL" to baseUrl, "__sdkType" to "openai")),
+                ),
+            )
+            val dao = memoryDao(providers, linkedMapOf())
+            val catalog = """{"providers":[{"id":"opencodecodingplan","name":"OpenCode Go","protocol":"openai","adapterType":"openai","chatSupported":true}],
+                "models":[{"id":"deepseek-v4-flash","providerId":"opencodecodingplan","type":"chat","displayName":"DeepSeek V4 Flash",
+                "contextWindowTokens":1048576,"maxOutput":393216,"abilities":{"reasoning":true,"functionCall":true},
+                "family":"deepseek","generation":"deepseek-v4"}]}"""
+            val seeder = CatalogSeeder(dao) { catalog }
+            val repository = ProviderRepositoryImpl(dao, EmptySecrets, seeder)
+
+            val fetched = repository.fetchRemoteModels(providerId, baseUrl, "")
+            assertTrue(fetched is AnResult.Ok)
+            assertEquals(listOf("deepseek-v4.1-flash"), (fetched as AnResult.Ok).value)
+
+            val metadata = Json.parseToJsonElement(
+                dao.model(providerId, "deepseek-v4.1-flash")!!.metadata,
+            ).jsonObject
+            assertEquals("1048576", metadata.getValue("contextWindowTokens").jsonPrimitive.content)
+            assertEquals("393216", metadata.getValue("maxOutput").jsonPrimitive.content)
+            assertEquals("true", metadata.getValue("abilities").jsonObject.getValue("reasoning").jsonPrimitive.content)
+            assertEquals("DeepSeek V4.1 Flash", metadata.getValue("displayName").jsonPrimitive.content)
+            assertEquals("deepseek-v4.1", metadata.getValue("generation").jsonPrimitive.content)
+
+            val detail = repository.getDetail(providerId)
+            assertTrue(detail is AnResult.Ok)
+            assertEquals(2, (detail as AnResult.Ok).value.modelCount)
+
+            val models = ModelRepositoryImpl(dao, seeder).listProviderModels(providerId)
+            assertTrue(models is AnResult.Ok)
+            val fetchedModel = (models as AnResult.Ok).value.single { it.id == "deepseek-v4.1-flash" }
+            assertTrue(fetchedModel.abilities.reasoning)
+            assertEquals(1048576, fetchedModel.contextWindowTokens)
         } finally {
             server.stop(0)
         }
@@ -230,6 +291,7 @@ class ProviderRemoteModelDiscoveryTest {
             "providers" -> providers.values.toList()
             "provider" -> providers[args?.firstOrNull() as String]
             "models" -> models.values.toList()
+            "modelsFor" -> models.values.filter { it.providerId == args?.firstOrNull() }
             "model" -> models[args?.get(0) as String to args[1] as String]
             "putProvider" -> {
                 val row = args?.firstOrNull() as ProviderRow

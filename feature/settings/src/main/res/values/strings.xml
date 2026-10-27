@@ -5,7 +5,7 @@
     <string name="section_web_search">Web search</string>
     <string name="web_search_entry_description">Choose the default and manage search services</string>
     <string name="web_search_off">Off</string>
-    <string name="web_search_native">Model native search</string>
+    <string name="web_search_native">Model Native search</string>
     <string name="web_search_native_help">Native search requires a supported OpenAI model. External search is offered to the model as a web_search tool; the model decides when to search. It never falls back to native search.</string>
     <string name="web_search_missing_provider">Unavailable service</string>
     <string name="web_search_builtin_title">Search services</string>
@@ -191,11 +191,12 @@
     <string name="providers_search_hint">Search providers</string>
     <string name="provider_id_chat_unavailable">%1$s · Local chat adapter unavailable</string>
     <string name="provider_detail_chat_unsupported">Provider and model metadata are bundled locally, but this app has no direct chat adapter for this provider.</string>
-    <string name="provider_detail_models_count">%1$d bundled models</string>
+    <string name="provider_detail_models_count">%1$d models</string>
     <string name="provider_detail_api_key_url">API key page</string>
     <string name="provider_detail_models_url">Model documentation</string>
     <string name="provider_detail_website">Provider website</string>
     <string name="provider_model_no_chat_adapter">Catalog entry only; no local chat adapter</string>
+    <string name="provider_model_details">Model details</string>
     <string name="providers_search_empty">No matching providers</string>
     <string name="provider_models_search_hint">Search models</string>
     <string name="provider_models_search_empty">No matching models</string>

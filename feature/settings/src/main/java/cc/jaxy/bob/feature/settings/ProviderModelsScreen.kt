@@ -1,13 +1,16 @@
 package cc.jaxy.bob.feature.settings
 
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material3.Card
@@ -28,6 +31,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -40,6 +44,7 @@ import androidx.lifecycle.viewModelScope
 import cc.jaxy.bob.core.common.result.AnResult
 import cc.jaxy.bob.core.data.chat.AIModel
 import cc.jaxy.bob.core.data.chat.ModelRepository
+import cc.jaxy.bob.core.data.chat.ReasoningConfig
 import cc.jaxy.bob.core.designsystem.component.AnTopBar
 import cc.jaxy.bob.core.designsystem.component.EmptyBox
 import cc.jaxy.bob.core.designsystem.component.ErrorBox
@@ -52,6 +57,13 @@ import cc.jaxy.bob.core.designsystem.text.resolve
 import cc.jaxy.bob.core.designsystem.text.toUiText
 import cc.jaxy.bob.core.designsystem.theme.BobTheme
 import cc.jaxy.bob.core.designsystem.theme.spacing
+import cc.jaxy.bob.feature.models.AbilityChips
+import cc.jaxy.bob.feature.models.ModelDetailSheet
+import cc.jaxy.bob.feature.models.ReasoningKeys
+import cc.jaxy.bob.feature.models.ReasoningUiState
+import cc.jaxy.bob.feature.models.abilityBadges
+import cc.jaxy.bob.feature.models.formatTokens
+import cc.jaxy.bob.feature.models.reasoningKeyOf
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -119,6 +131,63 @@ internal class ProviderModelsViewModel @Inject constructor(
             }
         }
     }
+
+    // --- Reasoning config cache, same contract as the model picker ---
+
+    private val _reasoning = MutableStateFlow<Map<String, ReasoningConfig>>(emptyMap())
+    val reasoning: StateFlow<Map<String, ReasoningConfig>> = _reasoning.asStateFlow()
+
+    private val _reasoningUi = MutableStateFlow<Map<String, ReasoningUiState>>(emptyMap())
+    val reasoningUi: StateFlow<Map<String, ReasoningUiState>> = _reasoningUi.asStateFlow()
+
+    fun loadReasoning(model: AIModel) {
+        val key = reasoningKeyOf(model)
+        if (_reasoning.value.containsKey(key) || _reasoningUi.value[key]?.loading == true) return
+        viewModelScope.launch {
+            _reasoningUi.value = _reasoningUi.value + (key to ReasoningUiState(loading = true))
+            when (val result = modelRepository.getReasoningConfig(model.id, model.providerId.orEmpty())) {
+                is AnResult.Ok -> {
+                    _reasoning.value = _reasoning.value + (key to result.value)
+                    _reasoningUi.value = _reasoningUi.value + (key to ReasoningUiState())
+                }
+                is AnResult.Err -> _reasoningUi.value = _reasoningUi.value + (key to ReasoningUiState(error = result.error.toUiText()))
+            }
+        }
+    }
+
+    fun saveReasoning(model: AIModel, key: String, value: String?) {
+        val cacheKey = reasoningKeyOf(model)
+        viewModelScope.launch {
+            val current = _reasoning.value[cacheKey] ?: ReasoningConfig()
+            _reasoningUi.value = _reasoningUi.value + (cacheKey to ReasoningUiState(saving = true))
+            val merged = current.raw.toMutableMap()
+            if (value.isNullOrBlank()) merged.remove(key) else merged[key] = value
+            when (val result = modelRepository.updateReasoningConfig(model.id, model.providerId.orEmpty(), merged)) {
+                is AnResult.Ok -> {
+                    _reasoning.value = _reasoning.value + (
+                        cacheKey to current.copy(
+                            effort = if (key == ReasoningKeys.EFFORT) value else current.effort,
+                            reasoningEffort = if (key == ReasoningKeys.REASONING_EFFORT) value else current.reasoningEffort,
+                            thinkingLevel = if (key == ReasoningKeys.THINKING_LEVEL) value else current.thinkingLevel,
+                            raw = merged.toMap(),
+                        )
+                        )
+                    _reasoningUi.value = _reasoningUi.value + (cacheKey to ReasoningUiState(saved = true))
+                }
+                is AnResult.Err -> _reasoningUi.value = _reasoningUi.value + (cacheKey to ReasoningUiState(error = result.error.toUiText()))
+            }
+        }
+    }
+
+    fun consumeReasoningSaved(model: AIModel) {
+        val key = reasoningKeyOf(model)
+        _reasoningUi.value[key]?.let { _reasoningUi.value = _reasoningUi.value + (key to it.copy(saved = false)) }
+    }
+
+    fun dismissReasoningError(model: AIModel) {
+        val key = reasoningKeyOf(model)
+        _reasoningUi.value[key]?.let { _reasoningUi.value = _reasoningUi.value + (key to it.copy(error = null)) }
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -145,7 +214,11 @@ private fun ProviderModelsContent(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val errorEvent by viewModel.errorEvent.collectAsStateWithLifecycle()
+    val reasoning by viewModel.reasoning.collectAsStateWithLifecycle()
+    val reasoningUi by viewModel.reasoningUi.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
+    var detailKey by remember { mutableStateOf<String?>(null) }
+    val detail = detailKey?.let { key -> uiState.models.find { reasoningKeyOf(it) == key } }
     val toggleError = errorEvent?.resolve()
     LaunchedEffect(providerId) { viewModel.bind(providerId) }
     LaunchedEffect(toggleError) {
@@ -179,9 +252,24 @@ private fun ProviderModelsContent(
                     refreshing = uiState.loading,
                     onRefresh = { viewModel.load() },
                     onToggle = { model, enabled -> viewModel.toggle(model, enabled) },
+                    onShowDetail = { detailKey = reasoningKeyOf(it) },
                     modifier = Modifier.fillMaxSize().padding(padding),
                 )
         }
+    }
+    detail?.let { model ->
+        val key = reasoningKeyOf(model)
+        ModelDetailSheet(
+            model = model,
+            config = reasoning[key],
+            ui = reasoningUi[key] ?: ReasoningUiState(),
+            snackbar = snackbar,
+            onLoad = viewModel::loadReasoning,
+            onSave = viewModel::saveReasoning,
+            onConsumeSaved = viewModel::consumeReasoningSaved,
+            onDismissError = viewModel::dismissReasoningError,
+            onDismiss = { detailKey = null },
+        )
     }
 }
 
@@ -192,6 +280,7 @@ private fun ProviderModelsBody(
     refreshing: Boolean,
     onRefresh: () -> Unit,
     onToggle: (AIModel, Boolean) -> Unit,
+    onShowDetail: (AIModel) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val spacing = MaterialTheme.spacing
@@ -236,6 +325,7 @@ private fun ProviderModelsBody(
                             providerId = providerId,
                             model = model,
                             onToggle = { onToggle(model, it) },
+                            onShowDetail = { onShowDetail(model) },
                         )
                     }
                 }
@@ -249,9 +339,11 @@ private fun ProviderModelRow(
     providerId: String,
     model: AIModel,
     onToggle: (Boolean) -> Unit,
+    onShowDetail: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val spacing = MaterialTheme.spacing
+    val badges = remember(model.abilities) { abilityBadges(model.abilities) }
     Card(
         modifier = modifier.fillMaxWidth().padding(bottom = spacing.s),
     ) {
@@ -277,11 +369,21 @@ private fun ProviderModelRow(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     } else {
-                        model.type?.takeIf(String::isNotBlank)?.let { type ->
+                        val chips = buildList {
+                            model.type?.takeIf(String::isNotBlank)?.let { add(it.uppercase()) }
+                            model.contextWindowTokens?.let { add(formatTokens(it)) }
+                        }
+                        if (chips.isNotEmpty()) {
                             Text(
-                                text = type.uppercase(),
+                                text = chips.joinToString(" · "),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        if (badges.isNotEmpty()) {
+                            AbilityChips(
+                                badges = badges,
+                                modifier = Modifier.padding(top = 4.dp),
                             )
                         }
                     }
@@ -291,11 +393,20 @@ private fun ProviderModelRow(
                 ModelIcon(modelId = model.id, providerId = providerId, label = model.displayName?.takeIf { it.isNotBlank() } ?: model.id, size = 40.dp)
             },
             trailingContent = {
-                Switch(
-                    checked = model.enabled == true,
-                    onCheckedChange = onToggle,
-                    enabled = model.chatSupported,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = onShowDetail, modifier = Modifier.size(32.dp)) {
+                        Icon(
+                            imageVector = Icons.Filled.Info,
+                            contentDescription = stringResource(R.string.provider_model_details),
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
+                    Switch(
+                        checked = model.enabled == true,
+                        onCheckedChange = onToggle,
+                        enabled = model.chatSupported,
+                    )
+                }
             },
         )
     }

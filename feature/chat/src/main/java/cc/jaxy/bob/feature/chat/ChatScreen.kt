@@ -20,7 +20,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.selection.selectable
-import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
@@ -56,7 +55,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.SnackbarHost
@@ -79,7 +77,6 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.input.ImeAction
@@ -104,7 +101,6 @@ import cc.jaxy.bob.core.designsystem.component.EmptyBox
 import cc.jaxy.bob.core.designsystem.component.InitialAvatar
 import cc.jaxy.bob.core.designsystem.component.MarkdownText
 import cc.jaxy.bob.core.designsystem.component.RefreshBox
-import cc.jaxy.bob.core.designsystem.component.SearchProviderIcon
 import cc.jaxy.bob.core.designsystem.component.SkeletonList
 import cc.jaxy.bob.core.designsystem.component.shimmer
 import cc.jaxy.bob.core.designsystem.component.relativeTimeText
@@ -114,6 +110,7 @@ import cc.jaxy.bob.core.designsystem.text.resolve
 import cc.jaxy.bob.core.designsystem.theme.BobTheme
 import cc.jaxy.bob.core.designsystem.theme.hapticTick
 import cc.jaxy.bob.core.designsystem.theme.spacing
+import cc.jaxy.bob.feature.models.WebSearchPickerDialog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -246,6 +243,7 @@ private fun ChatScreenWired(
         streamingSearchActivity = uiState.streamingSearchActivity,
         streamingCitations = uiState.streamingCitations,
         webSearchPolicy = uiState.webSearchPolicy,
+        webSearchOverride = uiState.webSearchOverride,
         searchProviders = uiState.searchProviders,
         searchProvidersError = uiState.searchProvidersError,
         nativeSearchSupported = uiState.activeModel?.let {
@@ -257,6 +255,7 @@ private fun ChatScreenWired(
         webSearchLoading = uiState.webSearchLoading,
         webSearchReady = uiState.webSearchReady,
         webSearchProviderName = uiState.webSearchProviderName,
+        purePrompt = uiState.purePrompt,
         topics = uiState.topics,
         topicsLoading = uiState.topicsLoading,
         activeTopicId = uiState.activeTopicId,
@@ -314,10 +313,12 @@ private fun ChatContent(
     streamingSearchActivity: WebSearchActivity? = null,
     streamingCitations: List<WebCitation> = emptyList(),
     webSearchPolicy: WebSearchPolicy = WebSearchPolicy(),
+    webSearchOverride: WebSearchPolicy = WebSearchPolicy(),
     webSearchAvailable: Boolean = false,
     webSearchLoading: Boolean = false,
     webSearchReady: Boolean = true,
     webSearchProviderName: String? = null,
+    purePrompt: Boolean = false,
     searchProviders: List<WebSearchProvider> = emptyList(),
     searchProvidersError: Boolean = false,
     nativeSearchSupported: Boolean = false,
@@ -363,13 +364,17 @@ private fun ChatContent(
     var showModelDetail by remember { mutableStateOf(false) }
     val barTitle = title?.takeIf { it.isNotBlank() }
         ?: stringResource(R.string.chat_default_title)
+    // Model/search loading is a blocking bootstrap phase: keep the icon
+    // affordances but remove labels and disable every bottom-bar interaction.
+    val configLoading = modelsLoading || webSearchLoading
     val searchAllowsSend = !webSearchLoading && webSearchReady && (webSearchPolicy.mode == WebSearchMode.OFF || webSearchAvailable)
-    val sendEnabled = input.isNotBlank() && !streaming && searchAllowsSend
+    val sendEnabled = input.isNotBlank() && !streaming && !configLoading && searchAllowsSend
 
     fun doSend() {
         val text = input.trim()
         // OFF needs no search route: never trap a plain message behind prefs loading.
-        val gate = if (webSearchPolicy.mode == WebSearchMode.OFF) !streaming else !streaming && searchAllowsSend
+        val gate = !streaming && !configLoading &&
+            (webSearchPolicy.mode == WebSearchMode.OFF || searchAllowsSend)
         if (text.isBlank() || !gate) return
         onSend(text, pendingFiles.mapNotNull { it.id.takeIf { id -> id.isNotBlank() } })
         input = ""
@@ -418,40 +423,38 @@ private fun ChatContent(
                         horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.s),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        if (modelsLoading && activeModel == null) {
-                            Box(
-                                modifier = Modifier
-                                    .size(width = 120.dp, height = 32.dp)
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .shimmer(),
-                            )
-                        } else {
-                            @OptIn(ExperimentalFoundationApi::class)
-                            Surface(
-                                shape = RoundedCornerShape(8.dp),
-                                color = MaterialTheme.colorScheme.surfaceContainerLow,
-                                border = androidx.compose.foundation.BorderStroke(
-                                    1.dp,
-                                    MaterialTheme.colorScheme.outlineVariant,
-                                ),
-                                modifier = Modifier.combinedClickable(
-                                    onClick = onOpenModelPicker,
-                                    onLongClick = { showModelDetail = true },
-                                ),
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(
-                                        horizontal = MaterialTheme.spacing.m,
-                                        vertical = MaterialTheme.spacing.s,
+                        @OptIn(ExperimentalFoundationApi::class)
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.surfaceContainerLow,
+                            border = androidx.compose.foundation.BorderStroke(
+                                1.dp,
+                                MaterialTheme.colorScheme.outlineVariant,
+                            ),
+                            modifier = Modifier
+                                .alpha(if (configLoading) 0.5f else 1f)
+                                .then(
+                                    if (configLoading) Modifier
+                                    else Modifier.combinedClickable(
+                                        onClick = onOpenModelPicker,
+                                        onLongClick = { showModelDetail = true },
                                     ),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.s),
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Filled.SmartToy,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(MaterialTheme.spacing.l),
-                                    )
+                                ),
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(
+                                    horizontal = MaterialTheme.spacing.m,
+                                    vertical = MaterialTheme.spacing.s,
+                                ),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.s),
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.SmartToy,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(MaterialTheme.spacing.l),
+                                )
+                                if (!modelsLoading) {
                                     Text(
                                         activeModel?.displayName?.takeIf { it.isNotBlank() }
                                             ?: activeModel?.id?.takeIf { it.isNotBlank() }
@@ -482,7 +485,9 @@ private fun ChatContent(
                                 1.dp,
                                 MaterialTheme.colorScheme.outlineVariant,
                             ),
-                            modifier = Modifier.clickable(enabled = !streaming) { showSearchPicker = true },
+                            modifier = Modifier
+                                .alpha(if (configLoading) 0.5f else 1f)
+                                .clickable(enabled = !streaming && !configLoading) { showSearchPicker = true },
                         ) {
                             Row(
                                 modifier = Modifier.padding(
@@ -497,20 +502,24 @@ private fun ChatContent(
                                     contentDescription = null,
                                     modifier = Modifier.size(MaterialTheme.spacing.l),
                                 )
-                                Text(
-                                    searchLabel,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    style = MaterialTheme.typography.labelLarge,
-                                )
+                                if (!webSearchLoading) {
+                                    Text(
+                                        searchLabel,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        style = MaterialTheme.typography.labelLarge,
+                                    )
+                                }
                             }
                         }
                         if (showSearchPicker) {
-                            ChatSearchPicker(
-                                policy = webSearchPolicy,
+                            WebSearchPickerDialog(
+                                policy = if (purePrompt) webSearchOverride else webSearchPolicy,
                                 providers = searchProviders,
                                 providersError = searchProvidersError,
                                 nativeSupported = nativeSearchSupported,
+                                purePrompt = purePrompt,
+                                nativeModel = activeModel,
                                 onSelect = { onSelectSearch(it); showSearchPicker = false },
                                 onManage = { showSearchPicker = false; onOpenWebSearchSettings() },
                                 onDismiss = { showSearchPicker = false },
@@ -552,7 +561,7 @@ private fun ChatContent(
                         } else {
                             IconButton(
                                 onClick = onAttachClick,
-                                enabled = !streaming && !uploading,
+                                enabled = !streaming && !uploading && !configLoading,
                             ) {
                                 Icon(
                                     imageVector = Icons.Filled.AttachFile,
@@ -569,7 +578,7 @@ private fun ChatContent(
                                 .onFocusChanged { state -> if (state.isFocused) onInputFocused() },
                             shape = RoundedCornerShape(24.dp),
                             maxLines = 6,
-                            enabled = !streaming,
+                            enabled = !streaming && !configLoading,
                             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                             keyboardActions = KeyboardActions(onSend = { doSend() }),
                         )
@@ -579,8 +588,17 @@ private fun ChatContent(
                             }
                         } else {
                             SmallFloatingActionButton(
-                                onClick = { doSend() },
-                                modifier = Modifier.alpha(if (sendEnabled) 1f else 0.5f),
+                                onClick = { if (sendEnabled) doSend() },
+                                containerColor = if (sendEnabled) {
+                                    MaterialTheme.colorScheme.primaryContainer
+                                } else {
+                                    MaterialTheme.colorScheme.surfaceVariant
+                                },
+                                contentColor = if (sendEnabled) {
+                                    MaterialTheme.colorScheme.onPrimaryContainer
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                },
                             ) {
                                 Icon(
                                     imageVector = Icons.AutoMirrored.Filled.Send,
@@ -882,91 +900,4 @@ private fun WebSearchSourcesPreview() {
             uploading = false,
         )
     }
-}
-
-
-/** Chat-side mirror of the agent search selector: Off / Model native /
- * enabled external services. Selection applies immediately and persists
- * to the agent. Engine icons match the settings list.
- */
-@Composable
-private fun ChatSearchPicker(
-    policy: WebSearchPolicy,
-    providers: List<WebSearchProvider>,
-    providersError: Boolean,
-    nativeSupported: Boolean,
-    onSelect: (WebSearchPolicy) -> Unit,
-    onManage: () -> Unit,
-    onDismiss: () -> Unit,
-) {
-    var show by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(true) }
-    if (!show) return
-    val selected = providers.firstOrNull { it.id == policy.providerId }
-    val unavailable = policy.mode == WebSearchMode.PROVIDER && selected?.enabled != true
-    AlertDialog(
-        onDismissRequest = { show = false; onDismiss() },
-        title = { Text(stringResource(R.string.chat_search_pick_title)) },
-        text = {
-            Column(Modifier.verticalScroll(rememberScrollState()).selectableGroup()) {
-                if (providersError) {
-                    Text(
-                        stringResource(R.string.chat_web_search_preferences_error),
-                        color = MaterialTheme.colorScheme.error,
-                    )
-                }
-                val options = listOf(
-                    WebSearchPolicy() to stringResource(R.string.chat_web_search_off),
-                    WebSearchPolicy(WebSearchMode.NATIVE) to stringResource(R.string.chat_web_search_native),
-                ) + providers.filter { it.enabled }.map {
-                    WebSearchPolicy(WebSearchMode.PROVIDER, it.id) to it.name
-                } + if (unavailable) listOf(policy to (selected?.name ?: policy.providerId.orEmpty())) else emptyList()
-                options.forEach { (option, title) ->
-                    val optionProvider = providers.firstOrNull { it.id == option.providerId }
-                    val enabled = when {
-                        option.mode == WebSearchMode.NATIVE -> nativeSupported
-                        option.mode == WebSearchMode.PROVIDER ->
-                            providers.any { it.id == option.providerId && it.enabled }
-                        else -> true
-                    }
-                    ListItem(
-                        colors = androidx.compose.material3.ListItemDefaults.colors(
-                            containerColor = androidx.compose.ui.graphics.Color.Transparent),
-                        headlineContent = { Text(title) },
-                        supportingContent = if (!enabled) ({
-                            Text(stringResource(
-                                if (option.mode == WebSearchMode.NATIVE) R.string.chat_web_search_native_unavailable
-                                else R.string.chat_web_search_provider_unavailable,
-                            ))
-                        }) else null,
-                        leadingContent = {
-                            if (option.mode == WebSearchMode.PROVIDER) {
-                                SearchProviderIcon(
-                                    providerId = optionProvider?.id,
-                                    name = title,
-                                    builtin = (optionProvider?.builtin == true),
-                                    size = 32.dp,
-                                )
-                            } else {
-                                RadioButton(selected = policy == option, onClick = null, enabled = enabled)
-                            }
-                        },
-                        modifier = Modifier.selectable(selected = policy == option, enabled = enabled, role = Role.RadioButton) {
-                            onSelect(option)
-                            show = false
-                        },
-                    )
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = { show = false; onManage() }) {
-                Text(stringResource(R.string.chat_search_manage))
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = { show = false; onDismiss() }) {
-                Text(stringResource(R.string.chat_close))
-            }
-        },
-    )
 }

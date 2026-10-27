@@ -32,4 +32,13 @@
     <string name="models_detail_saving">Saving…</string>
     <string name="models_detail_saved">Saved</string>
     <string name="models_detail_failed">Save failed</string>
+    <string name="web_search_picker_title">Web search</string>
+    <string name="web_search_picker_disable">Disable</string>
+    <string name="web_search_picker_native">Model Native</string>
+    <string name="web_search_picker_native_unavailable">Model Native is not supported by the current model. Try another model.</string>
+    <string name="web_search_picker_provider_unavailable">The selected search provider is unavailable. Check Web search settings.</string>
+    <string name="web_search_picker_pure_prompt_hint">Web search is off because the built-in prompt is disabled for this agent.</string>
+    <string name="web_search_picker_settings_error">Unable to read web search settings. Try again.</string>
+    <string name="web_search_picker_manage">Manage services</string>
+    <string name="web_search_picker_close">Close</string>
 </resources>

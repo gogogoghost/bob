@@ -58,6 +58,7 @@ interface LocalDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun putProvider(row: ProviderRow)
     @Query("SELECT * FROM models ORDER BY displayName") suspend fun models(): List<ModelRow>
     @Query("SELECT * FROM models WHERE providerId=:providerId ORDER BY displayName") suspend fun modelsFor(providerId: String): List<ModelRow>
+    @Query("SELECT * FROM models WHERE enabled = 1 ORDER BY displayName") suspend fun enabledModels(): List<ModelRow>
     @Query("SELECT * FROM models WHERE providerId=:providerId AND id=:id") suspend fun model(providerId: String, id: String): ModelRow?
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun putModel(row: ModelRow)
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun putModels(rows: List<ModelRow>)

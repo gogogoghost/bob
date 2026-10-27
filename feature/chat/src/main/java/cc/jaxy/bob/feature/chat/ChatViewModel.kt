@@ -165,7 +165,7 @@ class ChatViewModel @Inject constructor(
         publishSearchPolicy()
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(modelsLoading = true)
-            val modelsDeferred = async { modelRepository.listModels() }
+            val modelsDeferred = async { modelRepository.listChatModels() }
             val configDeferred = async { effectiveAgentId()?.let { agentRepository.getConfig(it) } }
             val models = (modelsDeferred.await() as? AnResult.Ok)?.value.orEmpty()
             val configResult = configDeferred.await()

@@ -39,12 +39,11 @@
     <string name="agents_edit_section_model">模型</string>
     <string name="agents_edit_section_prompt">系统提示词</string>
     <string name="agents_edit_section_web_search">联网搜索</string>
-    <string name="agents_web_search_disable">为此智能体禁用</string>
+    <string name="agents_web_search_disable">禁用</string>
     <string name="agents_web_search_native">模型原生搜索</string>
-    <string name="agents_web_search_native_unavailable">请选择支持内置搜索的 OpenAI 模型。</string>
-    <string name="agents_web_search_unavailable">所选服务已删除或停用。请管理服务或选择其他选项。</string>
+    <string name="agents_web_search_native_unavailable">当前模型不支持 Model Native，请尝试其他模型。</string>
+    <string name="agents_web_search_unavailable">所选搜索服务不可用，请检查联网搜索设置。</string>
     <string name="agents_web_search_load_error">无法加载搜索服务。请重新打开编辑器重试。</string>
-    <string name="agents_web_search_manage">管理搜索服务</string>
     <string name="agents_edit_section_opening">开场</string>
     <string name="agents_edit_opening_message_label">开场白</string>
     <string name="agents_edit_opening_question_label">开场问题 %1$d</string>

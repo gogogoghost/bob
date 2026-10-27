@@ -45,7 +45,7 @@ class ChatViewModelTest {
         var nextTopic = 0
         val models = dependency(ModelRepository::class.java) { name ->
             when (name) {
-                "listModels" -> AnResult.Ok(listOf(AIModel(id = "original-model", providerId = "original-provider", enabled = true)))
+                "listChatModels", "listModels" -> AnResult.Ok(listOf(AIModel(id = "original-model", providerId = "original-provider", enabled = true)))
                 else -> error("Unexpected model operation $name")
             }
         }
@@ -378,7 +378,7 @@ class ChatViewModelTest {
         val persisted = mutableListOf<ChatMessage>()
         val models = dependency(ModelRepository::class.java) { name ->
             when (name) {
-                "listModels" -> AnResult.Ok(listOf(AIModel(id = "local-model", providerId = "custom-local", enabled = true)))
+                "listChatModels", "listModels" -> AnResult.Ok(listOf(AIModel(id = "local-model", providerId = "custom-local", enabled = true)))
                 else -> error("Unexpected model operation $name")
             }
         }

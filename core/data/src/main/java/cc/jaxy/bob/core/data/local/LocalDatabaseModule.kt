@@ -5,6 +5,7 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.sqlite.db.SupportSQLiteDatabase
 import cc.jaxy.bob.core.common.util.providerAdapterType
+import cc.jaxy.bob.core.data.model.modelFamilyVersion
 import cc.jaxy.bob.core.common.util.providerDefaultEndpoint
 import dagger.Module
 import dagger.Provides
@@ -25,6 +26,7 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 
 internal const val ACTIVATION_DEFAULTS_VERSION_KEY = "__localActivationDefaultsVersion"
@@ -104,6 +106,68 @@ class CatalogSeeder(
 
     @Volatile
     private var seeded = false
+
+
+    /**
+     * Catalogue metadata for a model a provider listing exposed only by ID.
+     * Exact IDs win; provider-specific family versions beat a cross-provider
+     * match so token limits stay closer to the serving provider's contract.
+     */
+    fun referenceModelMetadata(modelId: String, providerId: String): JsonObject? {
+        val index = catalogIndexes
+        val id = modelId.lowercase()
+        index.byProviderAndId[providerId to id]?.let { return portable(it, presentation = true) }
+        index.byId[id]?.maxByOrNull(::metadataScore)?.let { return portable(it, presentation = true) }
+        val family = modelFamilyVersion(id) ?: return null
+        index.byProviderAndFamily[providerId to family]?.maxByOrNull(::metadataScore)
+            ?.let { return portable(it, presentation = false, familyFallback = true) }
+        index.byFamily[family]?.maxByOrNull(::metadataScore)
+            ?.let { return portable(it, presentation = false, familyFallback = true) }
+        return null
+    }
+
+    private data class CatalogIndexes(
+        val byProviderAndId: Map<Pair<String, String>, JsonObject>,
+        val byId: Map<String, List<JsonObject>>,
+        val byProviderAndFamily: Map<Pair<String, String>, List<JsonObject>>,
+        val byFamily: Map<String, List<JsonObject>>,
+    )
+
+    private val catalogIndexes: CatalogIndexes by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        val byProviderAndId = HashMap<Pair<String, String>, JsonObject>()
+        val byId = HashMap<String, MutableList<JsonObject>>()
+        val byProviderAndFamily = HashMap<Pair<String, String>, MutableList<JsonObject>>()
+        val byFamily = HashMap<String, MutableList<JsonObject>>()
+        for (model in bundledCatalog.models) {
+            val id = model.string("id")?.lowercase() ?: continue
+            val providerId = model.string("providerId") ?: continue
+            byProviderAndId[providerId to id] = model
+            byId.getOrPut(id) { mutableListOf() } += model
+            modelFamilyVersion(id)?.let { family ->
+                byProviderAndFamily.getOrPut(providerId to family) { mutableListOf() } += model
+                byFamily.getOrPut(family) { mutableListOf() } += model
+            }
+        }
+        CatalogIndexes(byProviderAndId, byId, byProviderAndFamily, byFamily)
+    }
+
+    private fun metadataScore(model: JsonObject): Int {
+        val abilities = (model["abilities"] as? JsonObject)?.count {
+            (it.value as? JsonPrimitive)?.booleanOrNull == true
+        } ?: 0
+        val context = if (model.containsKey("contextWindowTokens")) 2 else 0
+        val output = if (model.containsKey("maxOutput")) 1 else 0
+        val description = if (model.containsKey("description")) 1 else 0
+        return abilities + context + output + description
+    }
+
+    private fun portable(model: JsonObject, presentation: Boolean, familyFallback: Boolean = false): JsonObject = JsonObject(
+        model.filterKeys { key ->
+            key in PORTABLE_METADATA_KEYS &&
+                (presentation || key !in PRESENTATION_KEYS) &&
+                (!familyFallback || key in FAMILY_FALLBACK_KEYS)
+        },
+    )
 
     suspend fun ensureSeeded() = withContext(Dispatchers.IO) {
         seedMutex.withLock {
@@ -251,6 +315,12 @@ class CatalogSeeder(
 
     private companion object {
         val seedMutex = Mutex()
+        val PORTABLE_METADATA_KEYS = setOf(
+            "displayName", "description", "type", "contextWindowTokens", "maxOutput",
+            "abilities", "family", "generation", "knowledgeCutoff",
+        )
+        val PRESENTATION_KEYS = setOf("displayName", "description")
+        val FAMILY_FALLBACK_KEYS = setOf("contextWindowTokens", "maxOutput", "abilities", "family")
     }
 }
 

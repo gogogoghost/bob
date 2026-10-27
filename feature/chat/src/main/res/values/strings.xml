@@ -43,12 +43,12 @@
     <string name="chat_response_failed">The provider did not complete the response successfully.</string>
     <string name="chat_response_finish_reason">Provider finish reason: %1$s</string>
     <string name="chat_web_search_loading">Loading web search preference…</string>
-    <string name="chat_web_search_preferences_error">Unable to read search settings. Pull to refresh before sending.</string>
-    <string name="chat_web_search_native_unavailable">This model does not support native search. Change the search mode in Agent settings.</string>
-    <string name="chat_web_search_provider_unavailable">The selected search provider is disabled, missing, or unconfigured. Check Web search settings.</string>
+    <string name="chat_web_search_preferences_error">Unable to read web search settings. Try again.</string>
+    <string name="chat_web_search_native_unavailable">Model Native is not supported by the current model. Try another model.</string>
+    <string name="chat_web_search_provider_unavailable">The selected search provider is unavailable. Check Web search settings.</string>
     <string name="chat_web_search_route_status">Search: %1$s · %2$s</string>
     <string name="chat_web_search_off">Off</string>
-    <string name="chat_web_search_native">Model native</string>
+    <string name="chat_web_search_native">Model Native</string>
     <string name="chat_web_search_searching">Searching the web…</string>
     <string name="chat_web_search_reading">Reading web sources…</string>
     <string name="chat_web_search_completed">Web search completed</string>
@@ -63,7 +63,4 @@
     <string name="chat_search_summary_count">Searched %1$s · %2$d sources</string>
     <string name="chat_search_summary_done">Searched %1$s</string>
     <string name="chat_search_sources_count">%1$d sources found</string>
-    <string name="chat_search_pick_title">Web search</string>
-    <string name="chat_search_manage">Manage services</string>
-    <string name="chat_close">Close</string>
 </resources>

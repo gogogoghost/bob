@@ -238,10 +238,16 @@ class ProviderDetailViewModel @Inject constructor(
             }
             _uiState.value = _uiState.value.copy(fetching = true, remoteModels = null)
             when (val result = providerRepository.fetchRemoteModels(providerId, baseURL, apiKey)) {
-                is AnResult.Ok -> _uiState.value = _uiState.value.copy(
-                    fetching = false,
-                    remoteModels = result.value,
-                )
+                is AnResult.Ok -> {
+                    // The persisted model count (and any enriched metadata) is
+                    // read from Room, not the bundled catalogue snapshot.
+                    val refreshed = providerRepository.getDetail(providerId)
+                    _uiState.value = _uiState.value.copy(
+                        fetching = false,
+                        remoteModels = result.value,
+                        detail = (refreshed as? AnResult.Ok)?.value ?: _uiState.value.detail,
+                    )
+                }
                 is AnResult.Err -> {
                     _uiState.value = _uiState.value.copy(fetching = false)
                     _event.value = result.error.toUiText()
