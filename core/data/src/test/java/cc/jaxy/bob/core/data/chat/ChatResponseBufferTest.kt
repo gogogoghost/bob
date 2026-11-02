@@ -67,6 +67,22 @@ class ChatResponseBufferTest {
     }
 
     @Test
+    fun `search activity keeps the newest query last for live labels`() {
+        val buffer = ChatResponseBuffer("topic", "provider", "model")
+        buffer.append(ChatStreamChunk(searchActivity = WebSearchActivity(WebSearchStage.SEARCHING, listOf("first"),
+            providerId = "brave", providerName = "Brave")))
+        buffer.append(ChatStreamChunk(searchActivity = WebSearchActivity(WebSearchStage.COMPLETED, listOf("second"),
+            providerId = "brave", providerName = "Brave")))
+        assertEquals(listOf("first", "second"), buffer.searchActivity?.queries)
+        assertEquals(WebSearchStage.COMPLETED, buffer.searchActivity?.stage)
+        // Repeating an earlier query makes it the latest search, not a stale first entry.
+        buffer.append(ChatStreamChunk(searchActivity = WebSearchActivity(WebSearchStage.SEARCHING, listOf("first"),
+            providerId = "brave", providerName = "Brave")))
+        assertEquals(listOf("second", "first"), buffer.searchActivity?.queries)
+        assertEquals(WebSearchStage.SEARCHING, buffer.searchActivity?.stage)
+    }
+
+    @Test
     fun `stopped search activity keeps its stage while interrupted degrades`() {
         val stopped = ChatResponseBuffer("topic", "provider", "model")
         stopped.append(ChatStreamChunk(searchActivity = WebSearchActivity(WebSearchStage.READING, listOf("q"),

@@ -19,6 +19,14 @@ class CitationPresentationTest {
     }
 
     @Test
+    fun `the latest non-blank search query is the one the UI shows`() {
+        assertEquals(null, latestSearchQuery(emptyList()))
+        assertEquals(null, latestSearchQuery(listOf("", " ")))
+        assertEquals("newest", latestSearchQuery(listOf("oldest", "newest")))
+        assertEquals("newest", latestSearchQuery(listOf("oldest", "", "newest", " ")))
+    }
+
+    @Test
     fun `invalid ranges retain source cards without guessing a location`() {
         val body = "🌍 facts"
         val ranges = listOf(-1 to 2, 0 to 99, 3 to 3, 4 to 2, 0 to 1, 1 to 2)

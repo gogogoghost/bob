@@ -10,6 +10,9 @@ data class ChatCitation(val index: String, val title: String, val url: String) {
     }.getOrDefault(url)
 }
 
+/** Newest non-blank search query; activity keeps every query for the trace, oldest first. */
+internal fun latestSearchQuery(queries: List<String>): String? = queries.lastOrNull(String::isNotBlank)
+
 /** Display-only citations. The original answer remains the copy/persistence source. */
 internal data class CitationPresentation(
     val markdown: String,

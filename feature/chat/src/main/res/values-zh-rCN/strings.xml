@@ -49,6 +49,7 @@
     <string name="chat_web_search_off">关闭</string>
     <string name="chat_web_search_native">模型内置</string>
     <string name="chat_web_search_searching">正在联网搜索…</string>
+    <string name="chat_web_search_searching_query">正在搜索 · %1$s</string>
     <string name="chat_web_search_reading">正在阅读网页来源…</string>
     <string name="chat_web_search_completed">联网搜索已完成</string>
     <string name="chat_web_search_failed">联网搜索失败</string>

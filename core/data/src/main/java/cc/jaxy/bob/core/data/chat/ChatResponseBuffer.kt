@@ -39,11 +39,12 @@ class ChatResponseBuffer(
         }
         context.addAll(chunk.providerContext)
         chunk.searchActivity?.let { activity ->
+            // Queries accumulate for the trace, ordered by recency so the newest search is last;
+            // the live header and settled summary read that latest query.
             val previous = searchActivity?.queries.orEmpty()
             val queries = when {
-                previous.isEmpty() -> activity.queries
                 activity.queries.isEmpty() -> previous
-                else -> (previous + activity.queries).distinct()
+                else -> (previous.filterNot { it in activity.queries } + activity.queries).distinct()
             }
             searchActivity = if (queries == activity.queries) activity else activity.copy(queries = queries)
         }

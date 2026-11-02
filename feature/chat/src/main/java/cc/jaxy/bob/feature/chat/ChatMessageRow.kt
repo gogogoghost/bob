@@ -263,7 +263,9 @@ private fun ThinkingCard(
     // one-line search summary next to the thinking state.
     val header: String = when {
         liveSearch && searchActivity?.stage == WebSearchStage.SEARCHING ->
-            stringResource(R.string.chat_web_search_searching)
+            latestSearchQuery(searchActivity?.queries.orEmpty())
+                ?.let { query -> stringResource(R.string.chat_web_search_searching_query, query) }
+                ?: stringResource(R.string.chat_web_search_searching)
         liveSearch -> stringResource(R.string.chat_web_search_reading)
         searchActivity != null && searchActivity.stage == WebSearchStage.FAILED ->
             stringResource(R.string.chat_web_search_failed)
@@ -345,7 +347,7 @@ private fun searchSummary(activity: WebSearchActivity, sourceCount: Int): String
     val engine = activity.providerName?.takeIf(String::isNotBlank)
         ?: activity.providerId?.takeIf(String::isNotBlank)
         ?: stringResource(R.string.chat_web_search_native)
-    val query = activity.queries.firstOrNull { it.isNotBlank() }
+    val query = latestSearchQuery(activity.queries)
     return when {
         sourceCount > 0 && query != null ->
             stringResource(R.string.chat_search_summary_results, engine, sourceCount, query)

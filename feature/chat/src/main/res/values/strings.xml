@@ -50,6 +50,7 @@
     <string name="chat_web_search_off">Off</string>
     <string name="chat_web_search_native">Model Native</string>
     <string name="chat_web_search_searching">Searching the web…</string>
+    <string name="chat_web_search_searching_query">Searching · %1$s</string>
     <string name="chat_web_search_reading">Reading web sources…</string>
     <string name="chat_web_search_completed">Web search completed</string>
     <string name="chat_web_search_failed">Web search failed</string>
