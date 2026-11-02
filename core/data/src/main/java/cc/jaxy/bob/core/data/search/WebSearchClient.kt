@@ -2,6 +2,8 @@ package cc.jaxy.bob.core.data.search
 
 import cc.jaxy.bob.core.data.chat.normalizeSearxngUrl
 import java.io.IOException
+import java.time.ZonedDateTime
+import java.time.format.DateTimeFormatter
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
@@ -11,8 +13,6 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
@@ -38,13 +38,14 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okio.BufferedSink
 
 /**
- * A single, explicit provider request; never redirects, retries, or changes search services.
- * Requests to one endpoint are serialized and spaced by `minIntervalMillis` because every search
- * service is rate limited per credential and one answer can ask for several searches.
+ * A single, explicit provider request; never redirects, falls back, or changes search services.
+ * The only retry is a generic HTTP 429 rate-limit backoff: every supported service limits requests
+ * per credential, so the client waits for `Retry-After` (or a capped exponential delay) and repeats
+ * the same request, without provider-specific rules.
  * Protocol references live beside each adapter below. Credentials/query/response bodies are
  * deliberately excluded from diagnostics, including nested exception causes.
  */
-class WebSearchClient(client: OkHttpClient, private val minIntervalMillis: Long = MIN_REQUEST_INTERVAL_MILLIS) {
+class WebSearchClient(client: OkHttpClient) {
     private val client = client.newBuilder().apply {
         // The inference client's interceptors/listeners may log URLs or install model credentials.
         // Keep its TLS/proxy configuration, but do not inherit those observers or authentication.
@@ -67,21 +68,19 @@ class WebSearchClient(client: OkHttpClient, private val minIntervalMillis: Long 
             val response = chain.proceed(chain.request())
             if (!response.isSuccessful) {
                 val status = response.code
+                val retryAfter = if (status == 429) retryAfterMillis(response.header("Retry-After")) else null
                 response.close()
+                if (status == 429) throw SearchRateLimitedException(retryAfter)
                 // Reject before RetryAndFollowUpInterceptor sees 408/503/421, including GETs.
                 // retryOnConnectionFailure(false) alone does not disable HTTP status retries.
-                val hint = when (status) {
-                    403 -> " Check credentials, access restrictions, and JSON output settings."
-                    429 -> " The service rate limit or quota was exceeded."
-                    else -> ""
-                }
+                val hint = if (status == 403) " Check credentials, access restrictions, and JSON output settings." else ""
                 throw SearchResponseException("Web search returned HTTP $status.$hint")
             }
             response
         }
         .build()
 
-    suspend fun search(provider: WebSearchProvider, apiKey: String?, query: String): List<WebSearchResult> = coroutineScope {
+    suspend fun search(provider: WebSearchProvider, apiKey: String?, query: String): List<WebSearchResult> {
         currentCoroutineContext().ensureActive()
         require(provider.enabled) { "The selected web search service is disabled." }
         require(query.isNotBlank()) { "Web search query must not be blank." }
@@ -90,18 +89,30 @@ class WebSearchClient(client: OkHttpClient, private val minIntervalMillis: Long 
             require(key.isNotEmpty()) { "Configure an API key for the selected web search service." }
             require(key.all { it.code in 33..126 }) { "The web search API key contains invalid characters." }
         }
-        val request = request(provider, key, query)
-        val call = client.newCall(request)
-        val cancellation = launch(start = CoroutineStart.UNDISPATCHED) {
-            try { awaitCancellation() } finally { call.cancel() }
-        }
-        try {
-            RequestPacer.paced("${request.url.host}:${request.url.port}", minIntervalMillis) {
-                execute(provider, call)
+        return executeWithRateLimitRetry(provider, request(provider, key, query))
+    }
+
+    private suspend fun executeWithRateLimitRetry(provider: WebSearchProvider, request: Request): List<WebSearchResult> = coroutineScope {
+        var retries = 0
+        while (retries <= MAX_RATE_LIMIT_RETRIES) {
+            currentCoroutineContext().ensureActive()
+            val call = client.newCall(request)
+            val cancellation = launch(start = CoroutineStart.UNDISPATCHED) {
+                try { awaitCancellation() } finally { call.cancel() }
             }
-        } finally {
-            cancellation.cancel()
+            val rateLimited = try {
+                return@coroutineScope execute(provider, call)
+            } catch (error: SearchRateLimitedException) {
+                error
+            } finally {
+                cancellation.cancel()
+            }
+            val waitMillis = rateLimited.delayMillis(retries)
+            if (waitMillis == null) throw IOException(RATE_LIMIT_FAILURE)
+            retries++
+            delay(waitMillis)
         }
+        throw IOException(RATE_LIMIT_FAILURE)
     }
 
     private suspend fun execute(provider: WebSearchProvider, call: Call): List<WebSearchResult> = withContext(Dispatchers.IO) {
@@ -123,6 +134,8 @@ class WebSearchClient(client: OkHttpClient, private val minIntervalMillis: Long 
                 currentCoroutineContext().ensureActive()
                 decode(provider.protocol, source.readUtf8())
             }
+        } catch (rateLimited: SearchRateLimitedException) {
+            throw rateLimited
         } catch (error: SearchResponseException) {
             currentCoroutineContext().ensureActive()
             throw IOException(error.message)
@@ -265,39 +278,39 @@ private val HTTP_SCHEME = Regex("^https?://", RegexOption.IGNORE_CASE)
 private val TITLE_HIGHLIGHTS = Regex("</?(?:b|strong|em|mark|span)(?:\\s[^>]*)?>", RegexOption.IGNORE_CASE)
 private const val MAX_RESULTS = 5
 private const val MAX_RESPONSE_BYTES = 1_048_576L
-/**
- * One second is the strictest per-key window among the supported services (Brave Free allows one
- * request per second); the margin keeps request arrival outside it. Plans with higher limits pay
- * a small delay between searches instead of failing the answer on HTTP 429.
- */
-private const val MIN_REQUEST_INTERVAL_MILLIS = 1_200L
+/** Rate-limit waits longer than this are reported instead of blocking the answer. */
+internal const val MAX_RATE_LIMIT_DELAY_MILLIS = 10_000L
+/** First fallback wait when the service sends no `Retry-After`; doubles per retry. */
+private const val RATE_LIMIT_BACKOFF_MILLIS = 1_000L
+internal const val MAX_RATE_LIMIT_RETRIES = 3
+private const val RATE_LIMIT_FAILURE =
+    "Web search is still rate limited (HTTP 429) after retrying. Check the service plan, quota, and concurrent use of this key."
 
 /**
- * Every search service rate limits per credential or host, and one answer may issue several
- * searches. Requests to one endpoint therefore run one at a time and are spaced from the
- * previous response, which is when the limit was actually consumed. Lanes are shared across
- * client instances because the limit follows the key, not one screen.
+ * Header-directed wait when the service sent one, otherwise capped exponential backoff.
+ * Null means the requested wait is too long to hide from the user, so fail instead of retrying.
  */
-private object RequestPacer {
-    private class Lane {
-        val mutex = Mutex()
-        var lastCompleted = 0L
-    }
+internal fun rateLimitDelayMillis(retryAfterMillis: Long?, attempt: Int): Long? {
+    if (retryAfterMillis != null) return retryAfterMillis.takeIf { millis -> millis <= MAX_RATE_LIMIT_DELAY_MILLIS }
+    return RATE_LIMIT_BACKOFF_MILLIS shl attempt.coerceAtMost(8)
+}
 
-    private val registry = Mutex()
-    private val lanes = HashMap<String, Lane>()
+/** HTTP 429 only: the one transient status every search service reports the same way. */
+private class SearchRateLimitedException(private val retryAfterMillis: Long?) : IOException("Web search returned HTTP 429.") {
+    fun delayMillis(attempt: Int): Long? = rateLimitDelayMillis(retryAfterMillis, attempt)
+}
 
-    suspend fun <T> paced(key: String, intervalMillis: Long, block: suspend () -> T): T {
-        if (intervalMillis <= 0) return block()
-        val lane = registry.withLock { lanes.getOrPut(key) { Lane() } }
-        return lane.mutex.withLock {
-            val waitMillis = intervalMillis - TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - lane.lastCompleted)
-            if (lane.lastCompleted != 0L && waitMillis > 0) delay(waitMillis)
-            try {
-                block()
-            } finally {
-                lane.lastCompleted = System.nanoTime()
-            }
-        }
-    }
+/**
+ * `Retry-After` is either delta-seconds or an HTTP date; both are generic HTTP semantics, so the
+ * client never hard-codes a provider's own rate-limit headers. Unparsable values fall back to
+ * exponential backoff.
+ */
+internal fun retryAfterMillis(value: String?): Long? {
+    val text = value?.trim().orEmpty()
+    if (text.isEmpty()) return null
+    text.toLongOrNull()?.let { seconds -> return (seconds * 1_000).coerceAtLeast(0) }
+    return runCatching {
+        val retryAt = ZonedDateTime.parse(text, DateTimeFormatter.RFC_1123_DATE_TIME).toInstant().toEpochMilli()
+        (retryAt - System.currentTimeMillis()).coerceAtLeast(0)
+    }.getOrNull()
 }

@@ -187,7 +187,7 @@ class WebSearchClientTest {
     @Test
     fun `blocked redirects authentication and retryable statuses never replay any protocol`() = runBlocking {
         for (protocol in WebSearchProtocol.entries) {
-            for (status in listOf(301, 302, 307, 308, 401, 403, 407, 408, 421, 429, 503)) {
+            for (status in listOf(301, 302, 307, 308, 401, 403, 407, 408, 421, 503)) {
                 Server("$key $query", status = status, redirect = true).use { server ->
                     val error = runCatching { search.search(provider(protocol, server.root + "/search"), key, query) }.exceptionOrNull()
                     assertTrue("$protocol HTTP $status: $error", error is IOException)
@@ -367,45 +367,69 @@ class WebSearchClientTest {
     }
 
     @Test
-    fun `requests are spaced to the strictest per-key rate limit`() = runBlocking {
-        Server(fixture(WebSearchProtocol.BRAVE, listOf(hit("https://source.example/")))).use { server ->
-            val brave = provider(WebSearchProtocol.BRAVE, server.root + "/search")
-            search.search(brave, key, "first query")
-            search.search(brave, key, "second query")
-            val arrivals = server.arrivals.sorted()
-            assertEquals(2, arrivals.size)
-            val gapMillis = TimeUnit.NANOSECONDS.toMillis(arrivals[1] - arrivals[0])
-            assertTrue("Requests arrived ${gapMillis}ms apart", gapMillis >= 1_000)
-        }
+    fun `retry-after supports delta seconds and HTTP dates`() {
+        assertEquals(0L, retryAfterMillis("0"))
+        assertEquals(3_000L, retryAfterMillis(" 3 "))
+        assertNull(retryAfterMillis(null))
+        assertNull(retryAfterMillis(""))
+        assertNull(retryAfterMillis("soon"))
+        val formatter = java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME
+        val future = formatter.format(java.time.ZonedDateTime.now(java.time.ZoneOffset.UTC).plusSeconds(5))
+        val waitMillis = requireNotNull(retryAfterMillis(future))
+        assertTrue("HTTP-date wait $waitMillis", waitMillis in 2_000..5_000)
+        val past = formatter.format(java.time.ZonedDateTime.now(java.time.ZoneOffset.UTC).minusSeconds(5))
+        assertEquals(0L, retryAfterMillis(past))
     }
 
     @Test
-    fun `concurrent searches to one service queue in one rate window`() = runBlocking {
-        Server(fixture(WebSearchProtocol.BRAVE, listOf(hit("https://source.example/")))).use { server ->
-            val brave = provider(WebSearchProtocol.BRAVE, server.root + "/search")
-            val calls = listOf("parallel one", "parallel two").map { query ->
-                async(Dispatchers.IO) { search.search(brave, key, query) }
+    fun `retry waits come from the header or capped exponential backoff`() {
+        assertEquals(1_000L, rateLimitDelayMillis(null, 0))
+        assertEquals(2_000L, rateLimitDelayMillis(null, 1))
+        assertEquals(4_000L, rateLimitDelayMillis(null, 2))
+        assertEquals(0L, rateLimitDelayMillis(0L, 2))
+        assertEquals(2_500L, rateLimitDelayMillis(2_500L, 2))
+        assertNull(rateLimitDelayMillis(MAX_RATE_LIMIT_DELAY_MILLIS + 1, 0))
+    }
+
+    @Test
+    fun `a rate limited request waits and repeats itself for GET and JSON protocols`() = runBlocking {
+        for (protocol in listOf(WebSearchProtocol.BRAVE, WebSearchProtocol.TAVILY)) {
+            Server(fixture(protocol, listOf(hit("https://source.example/"))), firstStatus = 429, retryAfter = "0").use { server ->
+                val results = search.search(provider(protocol, server.root + "/search"), key, query)
+                assertEquals(listOf(WebSearchResult("https://source.example/", "Source title", "Actual source passage")), results)
+                assertEquals("$protocol retried", 2, server.requests.get())
             }
-            calls.forEach { assertEquals(1, it.await().size) }
-            val arrivals = server.arrivals.sorted()
-            assertEquals(2, arrivals.size)
-            val gapMillis = TimeUnit.NANOSECONDS.toMillis(arrivals[1] - arrivals[0])
-            assertTrue("Concurrent requests arrived ${gapMillis}ms apart", gapMillis >= 1_000)
         }
     }
 
     @Test
-    fun `every protocol paces repeat requests to one endpoint`() = runBlocking {
-        val paced = WebSearchClient(OkHttpClient(), minIntervalMillis = 150)
-        for (protocol in WebSearchProtocol.entries) {
-            Server(fixture(protocol, listOf(hit("https://source.example/")))).use { server ->
-                val target = provider(protocol, server.root + "/search")
-                paced.search(target, key, "first query")
-                paced.search(target, key, "second query")
-                val arrivals = server.arrivals.sorted()
-                assertEquals("$protocol requests", 2, arrivals.size)
-                val gapMillis = TimeUnit.NANOSECONDS.toMillis(arrivals[1] - arrivals[0])
-                assertTrue("$protocol requests arrived ${gapMillis}ms apart", gapMillis >= 150)
+    fun `rate limiting without a usable wait fails after the retry budget without replaying others`() = runBlocking {
+        Server(fixture(WebSearchProtocol.BRAVE, listOf(hit("https://source.example/"))), status = 429, retryAfter = "0").use { server ->
+            val error = runCatching { search.search(provider(WebSearchProtocol.BRAVE, server.root + "/search"), key, query) }.exceptionOrNull()
+            assertTrue("$error", error is IOException)
+            assertTrue(error?.message.orEmpty().contains("429"))
+            assertEquals(MAX_RATE_LIMIT_RETRIES + 1, server.requests.get())
+            assertPrivate(error)
+        }
+    }
+
+    @Test
+    fun `a server-requested wait beyond the cap fails immediately`() = runBlocking {
+        Server(fixture(WebSearchProtocol.BRAVE, listOf(hit("https://source.example/"))), status = 429, retryAfter = "3600").use { server ->
+            val error = runCatching { search.search(provider(WebSearchProtocol.BRAVE, server.root + "/search"), key, query) }.exceptionOrNull()
+            assertTrue("$error", error is IOException)
+            assertEquals(1, server.requests.get())
+        }
+    }
+
+    @Test
+    fun `only 429 is retried while other statuses stay single-shot`() = runBlocking {
+        for (status in listOf(400, 401, 402, 403, 404, 408, 421, 500, 503)) {
+            Server(fixture(WebSearchProtocol.TAVILY, listOf(hit("https://source.example/"))), status = status).use { server ->
+                val error = runCatching { search.search(provider(WebSearchProtocol.TAVILY, server.root + "/search"), key, query) }.exceptionOrNull()
+                assertTrue("HTTP $status: $error", error is IOException)
+                assertEquals("HTTP $status replayed", 1, server.requests.get())
+                assertTrue(error?.message.orEmpty().contains(status.toString()))
             }
         }
     }
@@ -461,25 +485,26 @@ class WebSearchClientTest {
         redirect: Boolean = false,
         chunked: Boolean = false,
         gzip: Boolean = false,
+        private val firstStatus: Int? = null,
+        private val retryAfter: String? = null,
     ) : AutoCloseable {
         val request = AtomicReference<CapturedRequest?>()
         val requests = AtomicInteger()
-        val arrivals = java.util.Collections.synchronizedList(mutableListOf<Long>())
         private val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
             createContext("/") { exchange ->
-                arrivals += System.nanoTime()
                 requests.incrementAndGet()
                 request.set(CapturedRequest(exchange.requestMethod, ("http://127.0.0.1:${address.port}" + exchange.requestURI).toHttpUrl(),
                     exchange.requestHeaders.entries.associate { it.key.lowercase() to it.value.joinToString(",") },
                     exchange.requestBody.use { it.readBytes().toString(Charsets.UTF_8) }))
+                val effectiveStatus = if (requests.get() == 1) firstStatus ?: status else status
                 val raw = body.toByteArray()
                 val bytes = if (gzip) ByteArrayOutputStream().apply { GZIPOutputStream(this).use { it.write(raw) } }.toByteArray() else raw
                 exchange.responseHeaders.add("Content-Type", type)
-                exchange.responseHeaders.add("Retry-After", "0")
+                exchange.responseHeaders.add("Retry-After", retryAfter ?: "0")
                 if (redirect) exchange.responseHeaders.add("Location", "/redirect-target")
                 if (gzip) exchange.responseHeaders.add("Content-Encoding", "gzip")
                 try {
-                    exchange.sendResponseHeaders(status, if (chunked) 0 else bytes.size.toLong())
+                    exchange.sendResponseHeaders(effectiveStatus, if (chunked) 0 else bytes.size.toLong())
                     exchange.responseBody.use { it.write(bytes) }
                 } catch (_: IOException) {
                     // Oversized response tests intentionally close the body before the server finishes.

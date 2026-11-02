@@ -32,7 +32,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** Pacing has its own tests; these tests must not wait one second per search. */
-private val fastSearch = WebSearchClient(OkHttpClient(), minIntervalMillis = 0)
+private val fastSearch = WebSearchClient(OkHttpClient())
 
 class DirectChatCompletionRepositoryTest {
     @Test

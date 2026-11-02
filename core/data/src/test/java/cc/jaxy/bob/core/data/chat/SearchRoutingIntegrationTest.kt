@@ -333,7 +333,7 @@ class SearchRoutingIntegrationTest {
                 override suspend fun delete(id: String) = error("Chat must not delete configuration")
             }
             return DirectChatCompletionRepository(dao, secrets, files, searches,
-                WebSearchClient(OkHttpClient(), minIntervalMillis = 0))
+                WebSearchClient(OkHttpClient()))
         }
 
         override fun close() { server.stop(0) }
