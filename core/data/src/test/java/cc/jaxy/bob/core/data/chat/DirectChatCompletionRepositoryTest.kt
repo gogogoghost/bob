@@ -6,6 +6,7 @@ import cc.jaxy.bob.core.data.local.ProviderRow
 import cc.jaxy.bob.core.data.local.ModelRow
 import cc.jaxy.bob.core.data.local.ReasoningRow
 import cc.jaxy.bob.core.data.provider.ProviderSecretStore
+import cc.jaxy.bob.core.data.search.WebSearchClient
 import cc.jaxy.bob.core.data.search.WebSearchMode
 import cc.jaxy.bob.core.data.search.WebSearchPolicy
 import cc.jaxy.bob.core.data.search.WebSearchProtocol
@@ -25,9 +26,13 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import okhttp3.OkHttpClient
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+
+/** Pacing has its own tests; these tests must not wait one second per search. */
+private val fastSearch = WebSearchClient(OkHttpClient(), minIntervalMillis = 0)
 
 class DirectChatCompletionRepositoryTest {
     @Test
@@ -47,6 +52,7 @@ class DirectChatCompletionRepositoryTest {
                 secrets = EmptySecrets,
                 files = UnusedFiles,
                 searchProviders = SearchProviders(),
+                webSearch = fastSearch,
             )
 
             val chunks = withTimeout(5_000) {
@@ -90,6 +96,7 @@ class DirectChatCompletionRepositoryTest {
                 secrets = FixedSecrets(mapOf("apiKey" to "local-openai-key")),
                 files = UnusedFiles,
                 searchProviders = SearchProviders(),
+                webSearch = fastSearch,
             )
 
             val chunks = repository.stream(
@@ -130,6 +137,7 @@ class DirectChatCompletionRepositoryTest {
                 secrets = EmptySecrets,
                 files = UnusedFiles,
                 searchProviders = SearchProviders(),
+                webSearch = fastSearch,
             )
 
             val chunks = repository.stream(
@@ -170,6 +178,7 @@ data: {"type":"message_stop"}
                 secrets = FixedSecrets(mapOf("apiKey" to "local-anthropic-key")),
                 files = UnusedFiles,
                 searchProviders = SearchProviders(),
+                webSearch = fastSearch,
             )
 
             val chunks = repository.stream(
@@ -209,6 +218,7 @@ data: {"type":"message_stop"}
             secrets = EmptySecrets,
             files = UnusedFiles,
             searchProviders = SearchProviders(),
+            webSearch = fastSearch,
         )
 
         val failure = runCatching {
@@ -238,6 +248,7 @@ data: {"type":"message_stop"}
                 secrets = EmptySecrets,
                 files = UnusedFiles,
                 searchProviders = SearchProviders(),
+                webSearch = fastSearch,
             )
 
             repository.stream(provider.id, "gpt-5", "", listOf(ChatMessage(role = "user", content = "Hi")),
@@ -280,7 +291,7 @@ data: [DONE]
             val provider = ProviderRow("custom-search", "Search test", "custom", true,
                 Json.encodeToString(mapOf("baseURL" to "$base/v1")))
             val search = WebSearchProvider("searxng", "SearXNG", WebSearchProtocol.SEARXNG, "$base/search", enabled = true)
-            val repository = DirectChatCompletionRepository(providerDao(provider, "local-model"), EmptySecrets, UnusedFiles, SearchProviders(listOf(search)))
+            val repository = DirectChatCompletionRepository(providerDao(provider, "local-model"), EmptySecrets, UnusedFiles, SearchProviders(listOf(search)), fastSearch)
             val chunks = mutableListOf<ChatStreamChunk>()
             val failure = runCatching {
                 withTimeout(5_000) {

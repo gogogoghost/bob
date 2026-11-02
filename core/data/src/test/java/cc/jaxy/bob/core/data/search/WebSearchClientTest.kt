@@ -367,7 +367,7 @@ class WebSearchClientTest {
     }
 
     @Test
-    fun `Brave requests are spaced to the plan's one-per-second limit`() = runBlocking {
+    fun `requests are spaced to the strictest per-key rate limit`() = runBlocking {
         Server(fixture(WebSearchProtocol.BRAVE, listOf(hit("https://source.example/")))).use { server ->
             val brave = provider(WebSearchProtocol.BRAVE, server.root + "/search")
             search.search(brave, key, "first query")
@@ -375,12 +375,12 @@ class WebSearchClientTest {
             val arrivals = server.arrivals.sorted()
             assertEquals(2, arrivals.size)
             val gapMillis = TimeUnit.NANOSECONDS.toMillis(arrivals[1] - arrivals[0])
-            assertTrue("Brave requests arrived ${gapMillis}ms apart", gapMillis >= 1_000)
+            assertTrue("Requests arrived ${gapMillis}ms apart", gapMillis >= 1_000)
         }
     }
 
     @Test
-    fun `concurrent Brave searches queue in one rate window`() = runBlocking {
+    fun `concurrent searches to one service queue in one rate window`() = runBlocking {
         Server(fixture(WebSearchProtocol.BRAVE, listOf(hit("https://source.example/")))).use { server ->
             val brave = provider(WebSearchProtocol.BRAVE, server.root + "/search")
             val calls = listOf("parallel one", "parallel two").map { query ->
@@ -390,7 +390,23 @@ class WebSearchClientTest {
             val arrivals = server.arrivals.sorted()
             assertEquals(2, arrivals.size)
             val gapMillis = TimeUnit.NANOSECONDS.toMillis(arrivals[1] - arrivals[0])
-            assertTrue("Concurrent Brave requests arrived ${gapMillis}ms apart", gapMillis >= 1_000)
+            assertTrue("Concurrent requests arrived ${gapMillis}ms apart", gapMillis >= 1_000)
+        }
+    }
+
+    @Test
+    fun `every protocol paces repeat requests to one endpoint`() = runBlocking {
+        val paced = WebSearchClient(OkHttpClient(), minIntervalMillis = 150)
+        for (protocol in WebSearchProtocol.entries) {
+            Server(fixture(protocol, listOf(hit("https://source.example/")))).use { server ->
+                val target = provider(protocol, server.root + "/search")
+                paced.search(target, key, "first query")
+                paced.search(target, key, "second query")
+                val arrivals = server.arrivals.sorted()
+                assertEquals("$protocol requests", 2, arrivals.size)
+                val gapMillis = TimeUnit.NANOSECONDS.toMillis(arrivals[1] - arrivals[0])
+                assertTrue("$protocol requests arrived ${gapMillis}ms apart", gapMillis >= 150)
+            }
         }
     }
 

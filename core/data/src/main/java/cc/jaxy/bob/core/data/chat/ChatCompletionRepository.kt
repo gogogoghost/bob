@@ -52,12 +52,12 @@ class DirectChatCompletionRepository @Inject constructor(
     private val secrets: ProviderSecretStore,
     private val files: FileRepository,
     private val searchProviders: WebSearchProviderRepository,
+    private val webSearch: WebSearchClient,
 ) : ChatCompletionRepository {
     private val http = OkHttpClientProvider.client
     private val json = Json { ignoreUnknownKeys = true }
     private val oauth = ProviderOAuthRepository(secrets)
     private val requests = ProviderChatRequests(files, http)
-    private val webSearch = WebSearchClient(http)
     override fun stream(
         providerId: String,
         modelId: String,

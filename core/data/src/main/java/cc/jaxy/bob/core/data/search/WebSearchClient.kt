@@ -39,12 +39,12 @@ import okio.BufferedSink
 
 /**
  * A single, explicit provider request; never redirects, retries, or changes search services.
- * Brave requests are additionally spaced per endpoint because its plans are rate limited per key
- * (Free: one request per second) and one answer can ask for several searches.
+ * Requests to one endpoint are serialized and spaced by `minIntervalMillis` because every search
+ * service is rate limited per credential and one answer can ask for several searches.
  * Protocol references live beside each adapter below. Credentials/query/response bodies are
  * deliberately excluded from diagnostics, including nested exception causes.
  */
-class WebSearchClient(client: OkHttpClient) {
+class WebSearchClient(client: OkHttpClient, private val minIntervalMillis: Long = MIN_REQUEST_INTERVAL_MILLIS) {
     private val client = client.newBuilder().apply {
         // The inference client's interceptors/listeners may log URLs or install model credentials.
         // Keep its TLS/proxy configuration, but do not inherit those observers or authentication.
@@ -96,11 +96,7 @@ class WebSearchClient(client: OkHttpClient) {
             try { awaitCancellation() } finally { call.cancel() }
         }
         try {
-            if (provider.protocol == WebSearchProtocol.BRAVE) {
-                RequestPacer.paced("${request.url.host}:${request.url.port}", BRAVE_MIN_INTERVAL_MILLIS) {
-                    execute(provider, call)
-                }
-            } else {
+            RequestPacer.paced("${request.url.host}:${request.url.port}", minIntervalMillis) {
                 execute(provider, call)
             }
         } finally {
@@ -269,14 +265,18 @@ private val HTTP_SCHEME = Regex("^https?://", RegexOption.IGNORE_CASE)
 private val TITLE_HIGHLIGHTS = Regex("</?(?:b|strong|em|mark|span)(?:\\s[^>]*)?>", RegexOption.IGNORE_CASE)
 private const val MAX_RESULTS = 5
 private const val MAX_RESPONSE_BYTES = 1_048_576L
-/** Brave's per-key window is one second; the margin keeps arrival times clear of it. */
-private const val BRAVE_MIN_INTERVAL_MILLIS = 1_200L
+/**
+ * One second is the strictest per-key window among the supported services (Brave Free allows one
+ * request per second); the margin keeps request arrival outside it. Plans with higher limits pay
+ * a small delay between searches instead of failing the answer on HTTP 429.
+ */
+private const val MIN_REQUEST_INTERVAL_MILLIS = 1_200L
 
 /**
- * Brave limits requests per API key (the Free plan allows one per second), and one answer may
- * issue several searches. Requests to one endpoint therefore run one at a time and are spaced
- * from the previous response, which is when the limit was actually consumed. Lanes are shared
- * across client instances because the limit follows the key, not one screen.
+ * Every search service rate limits per credential or host, and one answer may issue several
+ * searches. Requests to one endpoint therefore run one at a time and are spaced from the
+ * previous response, which is when the limit was actually consumed. Lanes are shared across
+ * client instances because the limit follows the key, not one screen.
  */
 private object RequestPacer {
     private class Lane {

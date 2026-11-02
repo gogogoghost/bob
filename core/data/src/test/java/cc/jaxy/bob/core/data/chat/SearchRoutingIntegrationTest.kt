@@ -5,6 +5,7 @@ import cc.jaxy.bob.core.data.local.LocalDao
 import cc.jaxy.bob.core.data.local.ModelRow
 import cc.jaxy.bob.core.data.local.ProviderRow
 import cc.jaxy.bob.core.data.provider.ProviderSecretStore
+import cc.jaxy.bob.core.data.search.WebSearchClient
 import cc.jaxy.bob.core.data.search.WebSearchMode
 import cc.jaxy.bob.core.data.search.WebSearchPolicy
 import cc.jaxy.bob.core.data.search.WebSearchProtocol
@@ -21,6 +22,7 @@ import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.*
+import okhttp3.OkHttpClient
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -330,7 +332,8 @@ class SearchRoutingIntegrationTest {
                 override suspend fun save(provider: WebSearchProvider, apiKey: String?) = error("Chat must not write configuration")
                 override suspend fun delete(id: String) = error("Chat must not delete configuration")
             }
-            return DirectChatCompletionRepository(dao, secrets, files, searches)
+            return DirectChatCompletionRepository(dao, secrets, files, searches,
+                WebSearchClient(OkHttpClient(), minIntervalMillis = 0))
         }
 
         override fun close() { server.stop(0) }
