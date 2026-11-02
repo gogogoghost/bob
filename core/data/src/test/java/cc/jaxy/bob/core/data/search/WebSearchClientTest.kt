@@ -366,6 +366,34 @@ class WebSearchClientTest {
         }
     }
 
+    @Test
+    fun `Brave requests are spaced to the plan's one-per-second limit`() = runBlocking {
+        Server(fixture(WebSearchProtocol.BRAVE, listOf(hit("https://source.example/")))).use { server ->
+            val brave = provider(WebSearchProtocol.BRAVE, server.root + "/search")
+            search.search(brave, key, "first query")
+            search.search(brave, key, "second query")
+            val arrivals = server.arrivals.sorted()
+            assertEquals(2, arrivals.size)
+            val gapMillis = TimeUnit.NANOSECONDS.toMillis(arrivals[1] - arrivals[0])
+            assertTrue("Brave requests arrived ${gapMillis}ms apart", gapMillis >= 1_000)
+        }
+    }
+
+    @Test
+    fun `concurrent Brave searches queue in one rate window`() = runBlocking {
+        Server(fixture(WebSearchProtocol.BRAVE, listOf(hit("https://source.example/")))).use { server ->
+            val brave = provider(WebSearchProtocol.BRAVE, server.root + "/search")
+            val calls = listOf("parallel one", "parallel two").map { query ->
+                async(Dispatchers.IO) { search.search(brave, key, query) }
+            }
+            calls.forEach { assertEquals(1, it.await().size) }
+            val arrivals = server.arrivals.sorted()
+            assertEquals(2, arrivals.size)
+            val gapMillis = TimeUnit.NANOSECONDS.toMillis(arrivals[1] - arrivals[0])
+            assertTrue("Concurrent Brave requests arrived ${gapMillis}ms apart", gapMillis >= 1_000)
+        }
+    }
+
     private fun provider(protocol: WebSearchProtocol, endpoint: String) = WebSearchProvider("test", "Test search", protocol, endpoint, enabled = true)
 
     private fun assertPrivate(error: Throwable?) {
@@ -420,8 +448,10 @@ class WebSearchClientTest {
     ) : AutoCloseable {
         val request = AtomicReference<CapturedRequest?>()
         val requests = AtomicInteger()
+        val arrivals = java.util.Collections.synchronizedList(mutableListOf<Long>())
         private val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
             createContext("/") { exchange ->
+                arrivals += System.nanoTime()
                 requests.incrementAndGet()
                 request.set(CapturedRequest(exchange.requestMethod, ("http://127.0.0.1:${address.port}" + exchange.requestURI).toHttpUrl(),
                     exchange.requestHeaders.entries.associate { it.key.lowercase() to it.value.joinToString(",") },

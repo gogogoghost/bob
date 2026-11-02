@@ -8,8 +8,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
@@ -21,6 +24,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.put
 import okhttp3.Authenticator
+import okhttp3.Call
 import okhttp3.CookieJar
 import okhttp3.EventListener
 import okhttp3.FormBody
@@ -35,6 +39,8 @@ import okio.BufferedSink
 
 /**
  * A single, explicit provider request; never redirects, retries, or changes search services.
+ * Brave requests are additionally spaced per endpoint because its plans are rate limited per key
+ * (Free: one request per second) and one answer can ask for several searches.
  * Protocol references live beside each adapter below. Credentials/query/response bodies are
  * deliberately excluded from diagnostics, including nested exception causes.
  */
@@ -64,7 +70,11 @@ class WebSearchClient(client: OkHttpClient) {
                 response.close()
                 // Reject before RetryAndFollowUpInterceptor sees 408/503/421, including GETs.
                 // retryOnConnectionFailure(false) alone does not disable HTTP status retries.
-                val hint = if (status == 403) " Check credentials, access restrictions, and JSON output settings." else ""
+                val hint = when (status) {
+                    403 -> " Check credentials, access restrictions, and JSON output settings."
+                    429 -> " The service rate limit or quota was exceeded."
+                    else -> ""
+                }
                 throw SearchResponseException("Web search returned HTTP $status.$hint")
             }
             response
@@ -86,37 +96,45 @@ class WebSearchClient(client: OkHttpClient) {
             try { awaitCancellation() } finally { call.cancel() }
         }
         try {
-            withContext(Dispatchers.IO) {
-                try {
-                    call.execute().use { response ->
-                        val body = response.body
-                        val subtype = body.contentType()?.subtype
-                        if (subtype != "json" && subtype?.endsWith("+json") != true) {
-                            throw SearchResponseException("Web search did not return JSON. Check the service endpoint and access settings.")
-                        }
-                        if (body.contentLength() > MAX_RESPONSE_BYTES) {
-                            throw SearchResponseException("Web search JSON response is too large.")
-                        }
-                        val source = body.source()
-                        source.request(MAX_RESPONSE_BYTES + 1)
-                        if (source.buffer.size > MAX_RESPONSE_BYTES) {
-                            throw SearchResponseException("Web search JSON response is too large.")
-                        }
-                        currentCoroutineContext().ensureActive()
-                        decode(provider.protocol, source.readUtf8())
-                    }
-                } catch (error: SearchResponseException) {
-                    currentCoroutineContext().ensureActive()
-                    throw IOException(error.message)
-                } catch (_: IOException) {
-                    currentCoroutineContext().ensureActive()
-                    // OkHttp failures can include the full URL (SerpApi puts its key in it).
-                    // Never preserve the underlying exception, its message, or suppressed errors.
-                    throw IOException("Web search request failed. Check connectivity and service configuration.")
+            if (provider.protocol == WebSearchProtocol.BRAVE) {
+                RequestPacer.paced("${request.url.host}:${request.url.port}", BRAVE_MIN_INTERVAL_MILLIS) {
+                    execute(provider, call)
                 }
+            } else {
+                execute(provider, call)
             }
         } finally {
             cancellation.cancel()
+        }
+    }
+
+    private suspend fun execute(provider: WebSearchProvider, call: Call): List<WebSearchResult> = withContext(Dispatchers.IO) {
+        try {
+            call.execute().use { response ->
+                val body = response.body
+                val subtype = body.contentType()?.subtype
+                if (subtype != "json" && subtype?.endsWith("+json") != true) {
+                    throw SearchResponseException("Web search did not return JSON. Check the service endpoint and access settings.")
+                }
+                if (body.contentLength() > MAX_RESPONSE_BYTES) {
+                    throw SearchResponseException("Web search JSON response is too large.")
+                }
+                val source = body.source()
+                source.request(MAX_RESPONSE_BYTES + 1)
+                if (source.buffer.size > MAX_RESPONSE_BYTES) {
+                    throw SearchResponseException("Web search JSON response is too large.")
+                }
+                currentCoroutineContext().ensureActive()
+                decode(provider.protocol, source.readUtf8())
+            }
+        } catch (error: SearchResponseException) {
+            currentCoroutineContext().ensureActive()
+            throw IOException(error.message)
+        } catch (_: IOException) {
+            currentCoroutineContext().ensureActive()
+            // OkHttp failures can include the full URL (SerpApi puts its key in it).
+            // Never preserve the underlying exception, its message, or suppressed errors.
+            throw IOException("Web search request failed. Check connectivity and service configuration.")
         }
     }
 
@@ -251,3 +269,35 @@ private val HTTP_SCHEME = Regex("^https?://", RegexOption.IGNORE_CASE)
 private val TITLE_HIGHLIGHTS = Regex("</?(?:b|strong|em|mark|span)(?:\\s[^>]*)?>", RegexOption.IGNORE_CASE)
 private const val MAX_RESULTS = 5
 private const val MAX_RESPONSE_BYTES = 1_048_576L
+/** Brave's per-key window is one second; the margin keeps arrival times clear of it. */
+private const val BRAVE_MIN_INTERVAL_MILLIS = 1_200L
+
+/**
+ * Brave limits requests per API key (the Free plan allows one per second), and one answer may
+ * issue several searches. Requests to one endpoint therefore run one at a time and are spaced
+ * from the previous response, which is when the limit was actually consumed. Lanes are shared
+ * across client instances because the limit follows the key, not one screen.
+ */
+private object RequestPacer {
+    private class Lane {
+        val mutex = Mutex()
+        var lastCompleted = 0L
+    }
+
+    private val registry = Mutex()
+    private val lanes = HashMap<String, Lane>()
+
+    suspend fun <T> paced(key: String, intervalMillis: Long, block: suspend () -> T): T {
+        if (intervalMillis <= 0) return block()
+        val lane = registry.withLock { lanes.getOrPut(key) { Lane() } }
+        return lane.mutex.withLock {
+            val waitMillis = intervalMillis - TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - lane.lastCompleted)
+            if (lane.lastCompleted != 0L && waitMillis > 0) delay(waitMillis)
+            try {
+                block()
+            } finally {
+                lane.lastCompleted = System.nanoTime()
+            }
+        }
+    }
+}
