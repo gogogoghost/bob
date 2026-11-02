@@ -63,6 +63,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -155,6 +156,14 @@ private fun ChatScreenWired(
     onBack: () -> Unit = {},
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    // A long reasoning/search turn outlives the display timeout, and with the screen
+    // off the process holds no wake lock, so the connection can stall. Keep the screen
+    // on only while a response is running; a manual lock still sleeps the device.
+    val view = LocalView.current
+    DisposableEffect(uiState.streaming) {
+        view.keepScreenOn = uiState.streaming
+        onDispose { view.keepScreenOn = false }
+    }
     val snackbar = remember { SnackbarHostState() }
     // Recreated per topic AND per load-generation: empty->loaded flips the
     // key, rebuilding state with the newest turn as the landing index so the
