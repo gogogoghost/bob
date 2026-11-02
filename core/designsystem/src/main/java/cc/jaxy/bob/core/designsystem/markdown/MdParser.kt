@@ -38,9 +38,17 @@ sealed interface MdBlock {
     data class Quote(val blocks: List<MdBlock>) : MdBlock
     data class Ordered(val start: Int, val items: List<List<MdBlock>>) : MdBlock
     data class Unordered(val tight: Boolean, val items: List<List<MdBlock>>) : MdBlock
-    data class Table(val headers: List<List<MdRun>>, val rows: List<List<List<MdRun>>>) : MdBlock
+    data class Table(
+        val headers: List<List<MdRun>>,
+        val rows: List<List<List<MdRun>>>,
+        /** Per-column GFM alignment; empty when the source used no delimiter colons. */
+        val alignments: List<MdAlign> = emptyList(),
+    ) : MdBlock
     data object Divider : MdBlock
 }
+
+/** GFM column alignment, mapped to text alignment by the renderer. */
+enum class MdAlign { START, CENTER, END }
 
 /** Inline run with cumulative style flags. */
 data class MdRun(
@@ -94,23 +102,34 @@ private fun Node.toBlock(): MdBlock? = when (this) {
     )
     is TableBlock -> {
         var headers: List<List<MdRun>> = emptyList()
+        var alignments: List<MdAlign> = emptyList()
         val rows = mutableListOf<List<List<MdRun>>>()
         children().forEach { section ->
             when (section) {
                 is TableHead -> section.children().filterIsInstance<TableRow>().firstOrNull()?.let { row ->
-                    headers = row.children().filterIsInstance<TableCell>().map { it.collectRuns() }
+                    val cells = row.children().filterIsInstance<TableCell>()
+                    headers = cells.map { it.collectRuns() }
+                    alignments = cells.map { it.mdAlignment() }
                 }
                 is TableBody -> section.children().filterIsInstance<TableRow>().forEach { row ->
-                    rows.add(row.children().filterIsInstance<TableCell>().map { it.collectRuns() })
+                    val cells = row.children().filterIsInstance<TableCell>()
+                    if (alignments.isEmpty()) alignments = cells.map { it.mdAlignment() }
+                    rows.add(cells.map { it.collectRuns() })
                 }
                 else -> Unit
             }
         }
-        MdBlock.Table(headers, rows)
+        MdBlock.Table(headers, rows, alignments)
     }
     is ThematicBreak -> MdBlock.Divider
     is HtmlBlock -> MdBlock.Paragraph(listOf(MdRun(literal?.trim() ?: "")))
     else -> null
+}
+
+private fun TableCell.mdAlignment(): MdAlign = when (alignment) {
+    TableCell.Alignment.CENTER -> MdAlign.CENTER
+    TableCell.Alignment.RIGHT -> MdAlign.END
+    else -> MdAlign.START
 }
 
 private fun Node.collectRuns(): List<MdRun> {

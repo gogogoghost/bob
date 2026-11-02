@@ -32,4 +32,5 @@ dependencies {
     implementation(libs.commonmark)
     implementation(libs.commonmark.tables)
     implementation(libs.commonmark.strikethrough)
+    testImplementation(libs.junit)
 }
