@@ -90,6 +90,34 @@ class SearchRoutingIntegrationTest {
     }
 
     @Test
+    fun `a complex answer can run far more searches than the old five-round bound`() = runBlocking {
+        RoutingServer(toolCalls = 8).use { server ->
+            val chunks = withTimeout(10_000) {
+                server.repository().stream("openai", "gpt-4.1", "", listOf(ChatMessage(role = "user", content = "Deep research")),
+                    searchPolicy = WebSearchPolicy(WebSearchMode.PROVIDER, "tavily")).toList()
+            }
+            assertEquals(8, server.requests.count { it.path == "/search" })
+            assertEquals(8, chunks.count { it.searchActivity?.stage == WebSearchStage.COMPLETED })
+            assertEquals("Grounded answer", chunks.joinToString("") { it.textDelta })
+            assertEquals(ChatCompletionStatus.COMPLETED, chunks.last().completion?.status)
+        }
+    }
+
+    @Test
+    fun `the search budget stops paid calls and still returns an answer`() = runBlocking {
+        RoutingServer(toolCalls = MAX_WEB_SEARCHES + 2).use { server ->
+            val chunks = withTimeout(20_000) {
+                server.repository().stream("openai", "gpt-4.1", "", listOf(ChatMessage(role = "user", content = "Wide research")),
+                    searchPolicy = WebSearchPolicy(WebSearchMode.PROVIDER, "tavily")).toList()
+            }
+            assertEquals(MAX_WEB_SEARCHES, server.requests.count { it.path == "/search" })
+            assertTrue(server.requests.last().body.toString().contains("search limit for this answer was reached"))
+            assertEquals("Grounded answer", chunks.joinToString("") { it.textDelta })
+            assertEquals(ChatCompletionStatus.COMPLETED, chunks.last().completion?.status)
+        }
+    }
+
+    @Test
     fun `malformed tool arguments are returned to the model instead of executing a search`() = runBlocking {
         RoutingServer(malformedArguments = true).use { server ->
             val chunks = withTimeout(5_000) {

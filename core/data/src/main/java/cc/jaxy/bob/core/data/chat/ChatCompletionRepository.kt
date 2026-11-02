@@ -112,6 +112,7 @@ class DirectChatCompletionRepository @Inject constructor(
             // previous tool results, but only the final assistant answer is exposed to the UI.
             var conversation = history
             var searchRounds = 0
+            var searches = 0
             var finalCompletion: ChatCompletion? = null
             while (true) {
                 var toolCalls = emptyList<ChatToolCall>()
@@ -180,6 +181,20 @@ class DirectChatCompletionRepository @Inject constructor(
                         )
                         continue
                     }
+                    // The budget limits spend; keeping the answer alive with a tool error lets the
+                    // model finish from the sources it already has instead of discarding them.
+                    if (searches >= MAX_WEB_SEARCHES) {
+                        conversation += ChatMessage(
+                            role = "tool",
+                            content = webSearchToolError(
+                                "The $MAX_WEB_SEARCHES-search limit for this answer was reached. " +
+                                    "Answer with the results already provided.",
+                            ),
+                            toolCallId = call.id,
+                        )
+                        continue
+                    }
+                    searches++
                     send(ChatStreamChunk(searchActivity = WebSearchActivity(WebSearchStage.SEARCHING, listOf(query),
                         providerId = identity.first, providerName = identity.second, providerBuiltin = identity.third)))
                     val results = try {
@@ -218,5 +233,9 @@ private object OkHttpClientProvider {
 
 private data class SearchTarget(val provider: WebSearchProvider, val key: String?)
 
-/** Bounded so a model cannot spend an unbounded number of paid searches in one turn. */
-private const val MAX_WEB_SEARCH_ROUNDS = 5
+/**
+ * Hard guard on tool-call rounds. Searches have their own budget, but malformed or unknown tool
+ * calls consume none, so rounds still need a bound; the slack lets the model see a few budget
+ * errors and answer before the loop is stopped.
+ */
+private const val MAX_WEB_SEARCH_ROUNDS = MAX_WEB_SEARCHES + 10
