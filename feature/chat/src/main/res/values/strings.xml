@@ -42,6 +42,8 @@
     <string name="chat_response_tool_required">The model requested a tool, but this conversation has no configured tools. The response is incomplete.</string>
     <string name="chat_response_failed">The provider did not complete the response successfully.</string>
     <string name="chat_response_finish_reason">Provider finish reason: %1$s</string>
+    <string name="chat_generation_channel">Reply generation</string>
+    <string name="chat_generation_notification_title">Generating a reply…</string>
     <string name="chat_web_search_loading">Loading web search preference…</string>
     <string name="chat_web_search_preferences_error">Unable to read web search settings. Try again.</string>
     <string name="chat_web_search_native_unavailable">Model Native is not supported by the current model. Try another model.</string>

@@ -73,7 +73,8 @@ class ChatViewModelTest {
         }
         val agents = dependency(AgentRepository::class.java) { error("Unexpected agent operation $it") }
         val files = dependency(FileRepository::class.java) { error("Unexpected file operation $it") }
-        val vm = ChatViewModel(SavedStateHandle(), messages, topics, models, agents, files, completions, TestSearchProviders())
+        val keepAlive = RecordingKeepAlive()
+        val vm = ChatViewModel(SavedStateHandle(), messages, topics, models, agents, files, completions, TestSearchProviders(), keepAlive)
         val store = ViewModelStore().apply { put("chat", vm) }
         try {
             runCurrent()
@@ -93,6 +94,8 @@ class ChatViewModelTest {
             assertEquals("original-model", stopped.model)
             assertEquals(ChatCompletionStatus.STOPPED, stopped.completion?.status)
             runCurrent()
+            assertEquals("one keep-alive per generation", 1, keepAlive.starts)
+            assertEquals("an explicit stop releases the keep-alive", 1, keepAlive.stops)
             vm.newConversation()
             vm.send("Second question")
             runCurrent()
@@ -109,6 +112,8 @@ class ChatViewModelTest {
             assertFalse(vm.uiState.value.streaming)
             assertEquals(listOf("Second question", "Second answer"), vm.uiState.value.messages.map { it.content })
             assertEquals(ChatCompletionStatus.COMPLETED, vm.uiState.value.messages.last().completion?.status)
+            assertEquals(2, keepAlive.starts)
+            assertEquals("a completed generation releases the keep-alive", 2, keepAlive.stops)
         } finally {
             releaseOldSave.complete(Unit)
             channels.forEach { it.close() }
@@ -191,7 +196,7 @@ class ChatViewModelTest {
         }
         val files = dependency(FileRepository::class.java) { error("Unexpected file operation $it") }
         val vm = ChatViewModel(SavedStateHandle(mapOf("agentId" to "search-agent")),
-            messages, topics, models, agents, files, completions, TestSearchProviders())
+            messages, topics, models, agents, files, completions, TestSearchProviders(), RecordingKeepAlive())
         val store = ViewModelStore().apply { put("pure", vm) }
         try {
             runCurrent()
@@ -245,7 +250,7 @@ class ChatViewModelTest {
             }
         } as AgentRepository
         val vm = ChatViewModel(SavedStateHandle(mapOf("agentId" to "persist-agent")),
-            messages, topics, models, updating, files, completions, TestSearchProviders())
+            messages, topics, models, updating, files, completions, TestSearchProviders(), RecordingKeepAlive())
         val store = ViewModelStore().apply { put("persist", vm) }
         try {
             runCurrent()
@@ -405,8 +410,15 @@ class ChatViewModelTest {
         }
         val files = dependency(FileRepository::class.java) { error("Unexpected file operation $it") }
         val handle = if (agentConfig == null) SavedStateHandle() else SavedStateHandle(mapOf("agentId" to "search-agent"))
-        val vm = ChatViewModel(handle, messages, topics, models, agents, files, completions, providers)
+        val vm = ChatViewModel(handle, messages, topics, models, agents, files, completions, providers, RecordingKeepAlive())
         return SearchFixture(vm, ViewModelStore().apply { put("search", vm) })
+    }
+
+    private class RecordingKeepAlive : ChatGenerationKeepAlive {
+        var starts = 0
+        var stops = 0
+        override fun start() { starts++ }
+        override fun stop() { stops++ }
     }
 
     private class TestSearchProviders(initial: List<WebSearchProvider> = listOf(testSearchProvider())) : WebSearchProviderRepository {

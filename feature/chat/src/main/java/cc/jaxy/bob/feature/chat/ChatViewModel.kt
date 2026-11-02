@@ -56,6 +56,7 @@ class ChatViewModel @Inject constructor(
     private val fileRepository: FileRepository,
     private val completionRepository: ChatCompletionRepository,
     private val searchProviders: WebSearchProviderRepository,
+    private val keepAlive: ChatGenerationKeepAlive,
 ) : ViewModel() {
     val agentId: String = savedStateHandle.get<String>("agentId") ?: ""
     val agentTitle: String? = savedStateHandle.get<String>("agentTitle")?.takeIf(String::isNotBlank)
@@ -402,6 +403,8 @@ class ChatViewModel @Inject constructor(
             response = buffer
             activeResponse = buffer
             var lastEmit = 0L
+            // Hold the CPU/Wi-Fi for the whole answer, including long reasoning and searches.
+            keepAlive.start()
             completionRepository.stream(providerId, model.id, systemPrompt, history, temperature,
                 sessionId = topicId, agentId = agentId, searchPolicy = searchPolicy, purePrompt = purePrompt).collect { chunk ->
                 buffer.append(chunk)
@@ -432,6 +435,7 @@ class ChatViewModel @Inject constructor(
                 if (completion.status == ChatCompletionStatus.FAILED) failureDetail = e.message
             }
         } finally {
+            keepAlive.stop()
             val buffer = response
             val assistant = buffer?.snapshot(failureDetail)
             val saved = if (buffer != null && assistant != null) withContext(NonCancellable) {

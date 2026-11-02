@@ -41,6 +41,8 @@
     <string name="chat_response_tool_required">模型请求调用工具，但当前会话没有配置工具，回答尚未完成。</string>
     <string name="chat_response_failed">供应商未正常完成本次回答。</string>
     <string name="chat_response_finish_reason">供应商结束原因：%1$s</string>
+    <string name="chat_generation_channel">回答生成</string>
+    <string name="chat_generation_notification_title">正在生成回答…</string>
     <string name="chat_web_search_loading">正在读取联网搜索偏好…</string>
     <string name="chat_web_search_preferences_error">无法读取联网搜索设置，请重试。</string>
     <string name="chat_web_search_native_unavailable">当前模型不支持 Model Native，请尝试其他模型。</string>

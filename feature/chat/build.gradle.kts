@@ -36,6 +36,7 @@ dependencies {
     implementation(libs.hilt.lifecycle.viewmodel.compose)
     implementation(libs.lifecycle.viewmodel.compose)
     implementation(libs.lifecycle.runtime.compose)
+    implementation(libs.core.ktx)
     implementation(libs.coroutines.core)
     implementation(libs.serialization.json)
     implementation(libs.hilt.android)
